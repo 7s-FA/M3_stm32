@@ -10,7 +10,7 @@
 #define DRIVE_CONTROL_PERIOD_MS      20U
 #define DRIVE_STATE_PUBLISH_MS       100U
 #define CMD_VEL_TIMEOUT_MS           300U
-#define MICROROS_DOMAIN_ID           40U
+#define MICROROS_DOMAIN_ID           41U
 
 #define IMU_ADDRESS_7BIT             0x68U
 #define IMU_READ_PERIOD_MS           20U

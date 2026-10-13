@@ -1,0 +1,5 @@
+Includes ROBOTIS TurtleBot3 Odometry (Copyright 2019 ROBOTIS CO., LTD., Apache-2.0).
+Source: turtlebot3/turtlebot3_node/src/odometry.cpp and include/turtlebot3_node/odometry.hpp.
+Local source snapshot from /home/ej/turtlebot3_ws/src/turtlebot3.
+Changes: per-instance baselines; invalid/delayed pairs rejected; gap/reset rebasing;
+first-sample yaw initialization. Wheel-distance and quaternion-yaw integration unchanged.

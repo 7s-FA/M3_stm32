@@ -131,7 +131,7 @@ void AppRTOS_Start(void *argument)
             &support, 0, NULL, &init_options, &allocator));
     CheckROS(rcl_init_options_fini(&init_options));
     CheckROS(rclc_node_init_default(
-            &node, "stm32_node", "", &support));
+            &node, "stm32_node", "/stm32", &support));
     CheckROS(IMU_InitPublisher(&node));
     (void)rmw_uros_sync_session(1000);
 
@@ -191,9 +191,10 @@ void AppRTOS_Start(void *argument)
         if (spin_result != RCL_RET_OK && spin_result != RCL_RET_TIMEOUT)
             rcl_reset_error();
 
-        /* Retry initial synchronization only while drive is disabled. */
-        if (!rmw_uros_epoch_synchronized() &&
-            !DriveControl_IsEnabled() &&
+        /* Refresh the Agent clock even after initial sync. The sync flag
+         * does not mean the MCU clock still agrees with the Pi clock.
+         * Keep this bounded blocking request out of motor-enabled operation. */
+        if (!DriveControl_IsEnabled() &&
             (HAL_GetTick() - last_time_sync_tick >= 2000U))
         {
             last_time_sync_tick = HAL_GetTick();

@@ -8,6 +8,7 @@
 typedef struct {
     bool initialized;
     bool sample_valid;
+    bool attitude_valid;
     uint8_t who_am_i;
     MPU9250_Result_t last_result;
     HAL_StatusTypeDef last_hal_status;

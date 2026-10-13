@@ -33,7 +33,7 @@ rcl_ret_t IMUDiagnostics_Init(rcl_node_t *node)
     message.data.capacity = sizeof(text);
     publisher = rcl_get_zero_initialized_publisher();
     rcl_ret_t result = rclc_publisher_init_best_effort(&publisher, node,
-        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, String), "/imu/status");
+        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, String), "imu/status");
     ready = result == RCL_RET_OK;
     last_tick = HAL_GetTick();
     return result;
@@ -53,8 +53,8 @@ void IMUDiagnostics_Update(rcl_ret_t spin_result)
     uint32_t age = imu_status.samples ?
         (uint32_t)(now - imu_status.sample.tick_ms) : UINT32_MAX;
     int length = snprintf(text, sizeof(text),
-        "fw=imu-only-v5 cal=%s n=%lu/100 bias_mrad_s=[%ld,%ld,%ld] restarts=%lu "
-        "initialized=%u who_am_i=0x%02X model=%s result=%s "
+        "fw=imu-ahrs-v6.2 cal=%s n=%lu/100 bias_mrad_s=[%ld,%ld,%ld] restarts=%lu "
+        "attitude=%u initialized=%u who_am_i=0x%02X model=%s result=%s "
         "hal=%u samples=%lu read_errors=%lu pub_err=%lu "
         "time_synced=%u age_ms=%lu loops=%lu "
         "spin_errors=%lu spin_rc=%ld status_err=%lu",
@@ -65,7 +65,7 @@ void IMUDiagnostics_Update(rcl_ret_t spin_result)
         (long)(imu_status.calibration.bias[1] * 1000.0f),
         (long)(imu_status.calibration.bias[2] * 1000.0f),
         (unsigned long)imu_status.calibration.restarts,
-        (unsigned)imu_status.initialized, (unsigned)imu_status.who_am_i,
+        (unsigned)imu_status.attitude_valid, (unsigned)imu_status.initialized, (unsigned)imu_status.who_am_i,
         imu_status.who_am_i == 0x70U ? "MPU6500" :
             (imu_status.who_am_i == 0x71U ? "MPU9250" : "UNKNOWN"),
         ResultName(imu_status.last_result), (unsigned)imu_status.last_hal_status,

@@ -82,6 +82,7 @@ endif()
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     MyApp/Src/mpu9250.c
     MyApp/Src/gyro_calibration.c
+    MyApp/Src/imu_attitude.c
     MyApp/Src/imu.c
     MyApp/Src/imu_diagnostics.c
     MyApp/Src/xl430.c

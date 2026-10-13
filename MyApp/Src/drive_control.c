@@ -29,6 +29,9 @@ typedef enum
     WHEEL_COMMAND_SOURCE_RAW_TEST
 } WheelCommandSource_t;
 
+static bool wheel_sample_valid;
+static bool wheel_read_retry_wait;
+static uint32_t last_wheel_read_error_tick;
 static WheelControl_t left_wheel;
 static WheelControl_t right_wheel;
 static float cmd_linear_mps;
@@ -48,6 +51,8 @@ static void DriveProcessCmdVel(void);
 
 void DriveControl_Init(void)
 {
+    wheel_sample_valid = false;
+    wheel_read_retry_wait = false;
     WheelInitialize(&left_wheel, XL430_LEFT_ID);
     WheelInitialize(&right_wheel, XL430_RIGHT_ID);
 }
@@ -100,7 +105,8 @@ void DriveControl_GetState(DriveState_t *state)
 
 bool DriveControl_UpdateJointState(sensor_msgs__msg__JointState *message)
 {
-    if (!left_wheel.position_zero_valid || !right_wheel.position_zero_valid)
+    if (!wheel_sample_valid || !rmw_uros_epoch_synchronized() ||
+        !left_wheel.position_zero_valid || !right_wheel.position_zero_valid)
         return false;
     JointStateUpdate(message);
     return true;
@@ -274,16 +280,10 @@ static void WheelsProcessVelocityCommand(void)
 
 static void WheelsUpdate(void)
 {
+    wheel_sample_valid = false;
     XL430_WheelState_t left_state;
     XL430_WheelState_t right_state;
     XL430_Result_t result;
-
-    if ((left_wheel.velocity_ready == false) ||
-        (right_wheel.velocity_ready == false))
-    {
-
-        return;
-    }
 
     /* Raw test commands have a secondary timeout; stop both wheels together. */
     if (((left_wheel.active_velocity != 0) &&
@@ -308,11 +308,18 @@ static void WheelsUpdate(void)
         right_wheel.active_velocity = 0;
     }
 
+    /* Feedback is independent of torque/velocity configuration. Keep the
+     * command watchdog above this backoff so read failures cannot delay stops. */
+    if (wheel_read_retry_wait &&
+        (uint32_t)(HAL_GetTick() - last_wheel_read_error_tick) < 1000U)
+        return;
+    wheel_read_retry_wait = false;
     result = XL430_SyncReadWheelState(
         &left_wheel.motor, &left_state,
         &right_wheel.motor, &right_state);
     if (result == XL430_OK)
     {
+        wheel_sample_valid = true;
         left_wheel.present_velocity = left_state.velocity;
         left_wheel.present_position = left_state.position;
         right_wheel.present_velocity = right_state.velocity;
@@ -329,12 +336,13 @@ static void WheelsUpdate(void)
             right_wheel.position_zero_valid = true;
         }
 
-        left_wheel.state = 1;
-        right_wheel.state = 1;
+        left_wheel.state = left_wheel.drive_enabled ? 1 : 0;
+        right_wheel.state = right_wheel.drive_enabled ? 1 : 0;
     }
     else
     {
-
+        wheel_read_retry_wait = true;
+        last_wheel_read_error_tick = HAL_GetTick();
         left_wheel.state = -(int32_t)result;
         right_wheel.state = -(int32_t)result;
     }

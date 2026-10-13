@@ -45,7 +45,7 @@ const rosidl_message_type_support_t *rosidl_typesupport_c__get_message_type_supp
 rcl_ret_t rclc_publisher_init_best_effort(rcl_publisher_t *p, const rcl_node_t *n,
     const rosidl_message_type_support_t *s, const char *topic)
 {
-    assert(p && n && s && strcmp(topic, "/imu/data_raw") == 0);
+    assert(p && n && s && strcmp(topic, "imu/data") == 0);
     return RCL_RET_OK;
 }
 rcl_ret_t rcl_publish(const rcl_publisher_t *p, const void *msg,
@@ -77,7 +77,7 @@ int main(void)
     assert(published.header.stamp.sec == 1700000000);
     assert(published.header.stamp.nanosec == 123456789);
     assert(strcmp(published.header.frame_id.data, "imu_link") == 0);
-    assert(published.orientation_covariance[0] == -1.0);
+    assert(published.orientation_covariance[0] == 0.0);
     assert(published.linear_acceleration.z == 3 && published.angular_velocity.x == 3.875);
     read_result = MPU9250_NOT_READY;
     tick = 80; IMU_Update();
@@ -90,7 +90,7 @@ int main(void)
     assert(reads == before);
     read_result = MPU9250_OK;
     tick = 1100; IMU_Update();
-    assert(publications == 2 && imu_status.sample_valid);
+    assert(publications == 1 && imu_status.sample_valid); /* Gap is not integrated. */
     publish_result = RCL_RET_ERROR;
     tick = 1120; IMU_Update();
     assert(imu_status.publish_errors == 1 && error_resets == 1);
