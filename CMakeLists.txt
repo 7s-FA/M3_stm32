@@ -85,6 +85,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     MyApp/Src/imu_attitude.c
     MyApp/Src/imu.c
     MyApp/Src/imu_diagnostics.c
+    MyApp/Src/battery_monitor.c
     MyApp/Src/xl430.c
     MyApp/Src/rtos.c
     MyApp/Src/drive_control.c
@@ -93,7 +94,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${MICROROS_DIR}/extra_sources/custom_memory_manager.c
     ${MICROROS_DIR}/extra_sources/microros_allocators.c
     ${MICROROS_DIR}/extra_sources/microros_time.c
-    ${MICROROS_DIR}/extra_sources/microros_transports/dma_transport.c
+    MyApp/Src/microros_transport.c
 )
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE

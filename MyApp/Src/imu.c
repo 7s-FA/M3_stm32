@@ -114,3 +114,11 @@ void IMU_Update(void)
         rcl_reset_error();
     }
 }
+
+void IMU_FiniPublisher(rcl_node_t *node)
+{
+    publisher_ready = false;
+    if (publisher.impl && rcl_publisher_fini(&publisher, node) != RCL_RET_OK)
+        rcl_reset_error();
+    publisher = rcl_get_zero_initialized_publisher();
+}

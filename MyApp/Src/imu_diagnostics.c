@@ -1,5 +1,6 @@
 #include "imu_diagnostics.h"
 #include "imu.h"
+#include "app_config.h"
 #include <rclc/rclc.h>
 #include <rcl/error_handling.h>
 #include <rmw_microros/rmw_microros.h>
@@ -53,7 +54,7 @@ void IMUDiagnostics_Update(rcl_ret_t spin_result)
     uint32_t age = imu_status.samples ?
         (uint32_t)(now - imu_status.sample.tick_ms) : UINT32_MAX;
     int length = snprintf(text, sizeof(text),
-        "fw=imu-ahrs-v6.2 cal=%s n=%lu/100 bias_mrad_s=[%ld,%ld,%ld] restarts=%lu "
+        "fw=imu-ahrs-v6.7 cal=%s n=%lu/%lu bias_mrad_s=[%ld,%ld,%ld] rejected=%lu "
         "attitude=%u initialized=%u who_am_i=0x%02X model=%s result=%s "
         "hal=%u samples=%lu read_errors=%lu pub_err=%lu "
         "time_synced=%u age_ms=%lu loops=%lu "
@@ -61,10 +62,11 @@ void IMUDiagnostics_Update(rcl_ret_t spin_result)
         imu_status.calibration.state == GYRO_CAL_READY ? "READY" :
             (imu_status.calibration.state == GYRO_CAL_WARMUP ? "WARMUP" : "COLLECTING"),
         (unsigned long)imu_status.calibration.count,
+        (unsigned long)IMU_CAL_SAMPLES,
         (long)(imu_status.calibration.bias[0] * 1000.0f),
         (long)(imu_status.calibration.bias[1] * 1000.0f),
         (long)(imu_status.calibration.bias[2] * 1000.0f),
-        (unsigned long)imu_status.calibration.restarts,
+        (unsigned long)imu_status.calibration.rejected,
         (unsigned)imu_status.attitude_valid, (unsigned)imu_status.initialized, (unsigned)imu_status.who_am_i,
         imu_status.who_am_i == 0x70U ? "MPU6500" :
             (imu_status.who_am_i == 0x71U ? "MPU9250" : "UNKNOWN"),
@@ -81,4 +83,12 @@ void IMUDiagnostics_Update(rcl_ret_t spin_result)
         ++status_publish_errors;
         rcl_reset_error();
     }
+}
+
+void IMUDiagnostics_Fini(rcl_node_t *node)
+{
+    ready = false;
+    if (publisher.impl && rcl_publisher_fini(&publisher, node) != RCL_RET_OK)
+        rcl_reset_error();
+    publisher = rcl_get_zero_initialized_publisher();
 }

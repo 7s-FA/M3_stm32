@@ -29,4 +29,5 @@ rcl_ret_t IMU_InitPublisher(rcl_node_t *node);
 /* Call from the same task after DriveControl_Update. No ISR calls. */
 void IMU_Update(void);
 
+void IMU_FiniPublisher(rcl_node_t *node);
 #endif

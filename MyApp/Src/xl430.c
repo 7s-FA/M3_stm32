@@ -12,10 +12,14 @@
 #define XL430_STATUS_INSTRUCTION       0x55U
 #define XL430_BROADCAST_ID             0xFEU
 
+#define XL430_ADDRESS_DRIVE_MODE       10U
 #define XL430_ADDRESS_OPERATING_MODE   11U
 #define XL430_ADDRESS_TORQUE_ENABLE    64U
 #define XL430_ADDRESS_BUS_WATCHDOG     98U
 #define XL430_ADDRESS_GOAL_VELOCITY    104U
+#define XL430_ADDRESS_PROFILE_ACCEL    108U
+#define XL430_ADDRESS_PROFILE_VELOCITY 112U
+#define XL430_ADDRESS_GOAL_POSITION    116U
 #define XL430_ADDRESS_PRESENT_VELOCITY 128U
 #define XL430_ADDRESS_PRESENT_POSITION 132U
 #define XL430_VELOCITY_CONTROL_MODE    1U
@@ -24,8 +28,8 @@
 #define XL430_HEADER_SIZE              7U
 #define XL430_MIN_STATUS_LENGTH        4U
 #define XL430_MAX_PARAMETERS           16U
-#define XL430_MAX_TX_PACKET_SIZE       (10U + XL430_MAX_PARAMETERS)
-#define XL430_MAX_RX_PACKET_SIZE       (11U + XL430_MAX_PARAMETERS)
+#define XL430_MAX_TX_PACKET_SIZE       (10U + 2U * XL430_MAX_PARAMETERS)
+#define XL430_MAX_RX_PACKET_SIZE       (11U + 2U * XL430_MAX_PARAMETERS)
 
 static uint16_t XL430_UpdateCRC(uint16_t crc, const uint8_t *data, size_t length);
 static XL430_Result_t XL430_TransmitInstruction(XL430_Handle_t *handle,
@@ -62,6 +66,16 @@ static XL430_Result_t XL430_ReadData(XL430_Handle_t *handle,
                                     uint16_t address,
                                     uint8_t *data,
                                     uint16_t data_length);
+
+XL430_Result_t XL430_ReadVoltage(XL430_Handle_t *handle, uint16_t *voltage_raw)
+{
+    uint8_t data[2];
+    if (voltage_raw == NULL) return XL430_ERROR_INVALID_ARGUMENT;
+    XL430_Result_t result = XL430_ReadData(handle, 144U, data, sizeof(data));
+    if (result == XL430_OK)
+        *voltage_raw = (uint16_t)data[0] | ((uint16_t)data[1] << 8U);
+    return result;
+}
 
 XL430_Result_t XL430_Init(XL430_Handle_t *handle,
                           UART_HandleTypeDef *uart,
@@ -178,6 +192,13 @@ XL430_Result_t XL430_ConfigureVelocityControl(XL430_Handle_t *handle,
     }
     if (result == XL430_OK)
     {
+        uint8_t mode;
+        result = XL430_ReadByte(handle, XL430_ADDRESS_OPERATING_MODE, &mode);
+        if (result == XL430_OK && mode != XL430_VELOCITY_CONTROL_MODE)
+            result = XL430_ERROR_DEVICE;
+    }
+    if (result == XL430_OK)
+    {
         result = XL430_SetGoalVelocity(handle, 0);
     }
     if (result == XL430_OK)
@@ -197,6 +218,59 @@ XL430_Result_t XL430_ConfigureVelocityControl(XL430_Handle_t *handle,
     }
 
     return result;
+}
+
+static XL430_Result_t XL430_WriteU32(XL430_Handle_t *handle, uint16_t address,
+                                      uint32_t value)
+{
+    uint8_t data[4] = {(uint8_t)value, (uint8_t)(value >> 8),
+                       (uint8_t)(value >> 16), (uint8_t)(value >> 24)};
+    return XL430_WriteData(handle, address, data, sizeof(data));
+}
+
+XL430_Result_t XL430_ConfigurePositionControl(XL430_Handle_t *handle,
+                                             uint32_t velocity, uint32_t acceleration,
+                                             uint8_t bus_watchdog_ticks)
+{
+    uint8_t drive_mode, mode;
+    if (!handle || velocity == 0 || velocity > XL430_MAX_VELOCITY_VALUE ||
+        acceleration == 0 || acceleration > 32767U || bus_watchdog_ticks > 127U)
+        return XL430_ERROR_INVALID_ARGUMENT;
+    XL430_Result_t result = XL430_SetTorque(handle, false);
+    if (result == XL430_OK) result = XL430_WriteByte(handle, XL430_ADDRESS_BUS_WATCHDOG, 0U);
+    if (result == XL430_OK) result = XL430_ReadByte(handle, XL430_ADDRESS_DRIVE_MODE, &drive_mode);
+    /* Disable time profile and torque-on-by-goal-update, retain direction. */
+    if (result == XL430_OK) result = XL430_WriteByte(handle, XL430_ADDRESS_DRIVE_MODE, drive_mode & ~0x0CU);
+    if (result == XL430_OK) result = XL430_WriteByte(handle, XL430_ADDRESS_OPERATING_MODE, 4U);
+    if (result == XL430_OK) result = XL430_ReadByte(handle, XL430_ADDRESS_OPERATING_MODE, &mode);
+    if (result == XL430_OK && mode != 4U) result = XL430_ERROR_DEVICE;
+    if (result == XL430_OK) result = XL430_WriteU32(handle, XL430_ADDRESS_PROFILE_ACCEL, acceleration);
+    if (result == XL430_OK) result = XL430_WriteU32(handle, XL430_ADDRESS_PROFILE_VELOCITY, velocity);
+    if (result == XL430_OK) result = XL430_WriteByte(handle, XL430_ADDRESS_BUS_WATCHDOG, bus_watchdog_ticks);
+    return result;
+}
+
+XL430_Result_t XL430_SetGoalPosition(XL430_Handle_t *handle, int32_t position)
+{
+    if (position < -1048575 || position > 1048575)
+        return XL430_ERROR_INVALID_ARGUMENT;
+    return XL430_WriteU32(handle, XL430_ADDRESS_GOAL_POSITION, (uint32_t)position);
+}
+
+XL430_Result_t XL430_SyncWriteGoalPosition(XL430_Handle_t *left, int32_t left_position,
+                                          XL430_Handle_t *right, int32_t right_position)
+{
+    if (!left || !right || !left->uart || left->uart != right->uart ||
+        left->id == right->id || left_position < -1048575 || left_position > 1048575 ||
+        right_position < -1048575 || right_position > 1048575)
+        return XL430_ERROR_INVALID_ARGUMENT;
+    uint8_t data[14] = {XL430_ADDRESS_GOAL_POSITION, 0U, 4U, 0U, left->id};
+    uint32_t l = (uint32_t)left_position, r = (uint32_t)right_position;
+    for (unsigned i = 0; i < 4; ++i) data[5+i] = (uint8_t)(l >> (8*i));
+    data[9] = right->id;
+    for (unsigned i = 0; i < 4; ++i) data[10+i] = (uint8_t)(r >> (8*i));
+    return XL430_TransmitInstruction(left, XL430_BROADCAST_ID,
+                                     XL430_INSTRUCTION_SYNC_WRITE, data, sizeof(data));
 }
 
 XL430_Result_t XL430_SetGoalVelocity(XL430_Handle_t *handle,
@@ -497,22 +571,23 @@ static XL430_Result_t XL430_TransmitInstruction(XL430_Handle_t *handle,
         return XL430_ERROR_INVALID_ARGUMENT;
     }
 
-    protocol_length = (uint16_t)(parameter_length + 3U);
-    packet_length = (uint16_t)(10U + parameter_length);
-
     packet[0] = 0xFFU;
     packet[1] = 0xFFU;
     packet[2] = 0xFDU;
     packet[3] = XL430_PROTOCOL_RESERVED;
     packet[4] = packet_id;
-    packet[5] = (uint8_t)(protocol_length & 0xFFU);
-    packet[6] = (uint8_t)((protocol_length >> 8U) & 0xFFU);
     packet[7] = instruction;
-
-    if (parameter_length > 0U)
-    {
-        memcpy(&packet[8], parameters, parameter_length);
+    uint16_t end = 8U;
+    for (uint16_t i = 0; i < parameter_length; ++i) {
+        packet[end++] = parameters[i];
+        if (end >= 10U && packet[end-3] == 0xFFU &&
+            packet[end-2] == 0xFFU && packet[end-1] == 0xFDU)
+            packet[end++] = 0xFDU;
     }
+    packet_length = end + 2U;
+    protocol_length = packet_length - XL430_HEADER_SIZE;
+    packet[5] = (uint8_t)protocol_length;
+    packet[6] = (uint8_t)(protocol_length >> 8);
 
     crc = XL430_UpdateCRC(0U, packet, packet_length - 2U);
     packet[packet_length - 2U] = (uint8_t)(crc & 0xFFU);
@@ -635,6 +710,18 @@ static XL430_Result_t XL430_ReceiveStatus(XL430_Handle_t *handle,
     {
         return XL430_ERROR_CRC;
     }
+
+    /* CRC covers the stuffed wire packet; unstuff only after checking it. */
+    uint16_t decoded_end = XL430_HEADER_SIZE;
+    for (uint16_t i = XL430_HEADER_SIZE; i < total_length - 2U; ++i) {
+        packet[decoded_end++] = packet[i];
+        if (decoded_end >= 10U && packet[decoded_end-3] == 0xFFU &&
+            packet[decoded_end-2] == 0xFFU && packet[decoded_end-1] == 0xFDU) {
+            if (++i >= total_length - 2U || packet[i] != 0xFDU)
+                return XL430_ERROR_PACKET;
+        }
+    }
+    protocol_length = decoded_end - XL430_HEADER_SIZE + 2U;
 
     if (packet[4] != handle->id)
     {

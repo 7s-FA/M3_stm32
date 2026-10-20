@@ -8,7 +8,7 @@
 
 I2C_HandleTypeDef hi2c1;
 static uint32_t tick;
-static unsigned int reads, publications, error_resets;
+static unsigned int reads, publications, error_resets, finalizations;
 static bool synchronized;
 static MPU9250_Result_t init_result = MPU9250_OK, read_result = MPU9250_OK;
 static rcl_ret_t publish_result = RCL_RET_OK;
@@ -46,6 +46,7 @@ rcl_ret_t rclc_publisher_init_best_effort(rcl_publisher_t *p, const rcl_node_t *
     const rosidl_message_type_support_t *s, const char *topic)
 {
     assert(p && n && s && strcmp(topic, "imu/data") == 0);
+    p->impl = (void *)&published;
     return RCL_RET_OK;
 }
 rcl_ret_t rcl_publish(const rcl_publisher_t *p, const void *msg,
@@ -56,6 +57,8 @@ rcl_ret_t rcl_publish(const rcl_publisher_t *p, const void *msg,
     ++publications;
     return publish_result;
 }
+rcl_ret_t rcl_publisher_fini(rcl_publisher_t *p, rcl_node_t *n)
+{ assert(p && p->impl && n); ++finalizations; return RCL_RET_OK; }
 void rcutils_reset_error(void) { ++error_resets; }
 
 int main(void)
@@ -94,6 +97,15 @@ int main(void)
     publish_result = RCL_RET_ERROR;
     tick = 1120; IMU_Update();
     assert(imu_status.publish_errors == 1 && error_resets == 1);
+    IMU_FiniPublisher(&node);
+    assert(finalizations == 1);
+    before = publications; tick += 20; IMU_Update();
+    assert(publications == before && imu_status.calibration.state == GYRO_CAL_READY);
+    assert(imu_status.calibration.bias[0] == 0.125f);
+    IMU_FiniPublisher(&node); assert(finalizations == 1); /* Idempotent teardown. */
+    assert(IMU_InitPublisher(&node) == RCL_RET_OK);
+    publish_result = RCL_RET_OK; tick += 20; IMU_Update();
+    assert(publications == before + 1);
     tick = UINT32_MAX - 10U; IMU_InitSensor();
     before = reads;
     tick = 15; IMU_Update();

@@ -69,6 +69,18 @@ XL430_Result_t XL430_ReadTorque(XL430_Handle_t *handle, bool *enabled);
 XL430_Result_t XL430_ConfigureVelocityControl(XL430_Handle_t *handle,
                                               uint8_t bus_watchdog_ticks);
 
+/* Leaves torque OFF. Selects mode 4 and velocity-based profiles, preserving
+ * the other Drive Mode bits. The caller must seed Goal Position before enable. */
+XL430_Result_t XL430_ConfigurePositionControl(XL430_Handle_t *handle,
+                                             uint32_t velocity, uint32_t acceleration,
+                                             uint8_t bus_watchdog_ticks);
+XL430_Result_t XL430_SetGoalPosition(XL430_Handle_t *handle, int32_t position);
+XL430_Result_t XL430_SyncWriteGoalPosition(XL430_Handle_t *left, int32_t left_position,
+                                          XL430_Handle_t *right, int32_t right_position);
+
+/** Read Present Input Voltage(144), raw units of 0.1 V. */
+XL430_Result_t XL430_ReadVoltage(XL430_Handle_t *handle, uint16_t *voltage_raw);
+
 /** Set Goal Velocity(104), in XL430 raw units (1 unit is approximately 0.229 rpm). */
 XL430_Result_t XL430_SetGoalVelocity(XL430_Handle_t *handle,
                                      int32_t velocity);
