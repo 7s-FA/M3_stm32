@@ -139,3 +139,19 @@ six publisher slots are required (the bundled library provides twelve).
 Usage, ID/retry semantics, docking integration, bounds and hardware validation:
 [상대 펄스 이동 안내](POSITION_CONTROL.md). Firmware diagnostic tag:
 `fw=imu-ahrs-v6.7`. No Pi bridge rebuild is required.
+
+## v6.7-battery: measured voltage telemetry
+
+The existing battery monitor's cached XL430 input voltage is published at 1 Hz
+on `/stm32/battery_voltage` (`std_msgs/msg/Float32`, volts, best effort).
+This adds no UART reads and leaves buzzer thresholds and drive control unchanged.
+Before the first successful nonzero reading, after a failed read, or when a
+reading is older than 500 ms, no voltage is published. The receiving UI must
+expire old readings. The value is motor supply voltage, not measured capacity.
+Battery publish errors do not initiate drive disconnection. The extra publisher
+is cleaned up with the other entities when the Agent reconnects.
+
+Diagnostic tag: `fw=imu-ahrs-v6.7-battery`. Run `bash tests/run_reconnection.sh`
+before building. Hardware flashing and voltage verification remain separate
+from host tests; see [the project README](../README.md) for build and handoff
+instructions and the recorded M1 verification.

@@ -3,6 +3,7 @@
 #include "imu_diagnostics.h"
 #include "app_config.h"
 #include "drive_control.h"
+#include "battery_monitor.h"
 #include "microros_platform.h"
 #include "main.h"
 #include "cmsis_os.h"
@@ -18,10 +19,11 @@
 #include <geometry_msgs/msg/twist.h>
 #include <std_msgs/msg/string.h>
 #include <std_msgs/msg/int32.h>
+#include <std_msgs/msg/float32.h>
 
-/* Two wheel states, JointState, IMU, diagnostics and move status; one service. */
-#if RMW_UXRCE_MAX_PUBLISHERS < 6 || RMW_UXRCE_MAX_SERVICES < 1
-#error "micro-ROS requires at least 6 publishers and 1 service"
+/* Existing six publishers plus cached battery telemetry; one service. */
+#if RMW_UXRCE_MAX_PUBLISHERS < 7 || RMW_UXRCE_MAX_SERVICES < 1
+#error "micro-ROS requires at least 7 publishers and 1 service"
 #endif
 
 static void DriveStateCallback(const void *request, void *response);
@@ -77,6 +79,7 @@ void AppRTOS_Start(void *argument)
         drive_state_text[0] = '\0';
         rcl_publisher_t joint_state_publisher = rcl_get_zero_initialized_publisher();
         rcl_publisher_t move_status_publisher = rcl_get_zero_initialized_publisher();
+        rcl_publisher_t battery_publisher = rcl_get_zero_initialized_publisher();
         static char move_status_text[192];
         std_msgs__msg__String move_status_msg = {0};
         move_status_msg.data.data = move_status_text;
@@ -96,6 +99,7 @@ void AppRTOS_Start(void *argument)
         uint32_t last_state_publish_tick;
         uint32_t last_time_sync_tick;
         uint32_t last_ping_tick;
+        uint32_t last_battery_tick;
 
         static char xl430_command_buffer[XL430_CMD_BUFFER_SIZE];
         static char left_joint_name[] = LEFT_WHEEL_JOINT_NAME;
@@ -171,6 +175,9 @@ void AppRTOS_Start(void *argument)
         TRY_ROS(rclc_publisher_init_best_effort(
             &move_status_publisher, &node,
             ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, String), "move_status"));
+        TRY_ROS(rclc_publisher_init_best_effort(
+            &battery_publisher, &node,
+            ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32), "battery_voltage"));
         TRY_ROS(rclc_service_init_default(
             &drive_state_service, &node,
             ROSIDL_GET_SRV_TYPE_SUPPORT(std_srvs, srv, Trigger), "get_drive_state"));
@@ -226,6 +233,7 @@ void AppRTOS_Start(void *argument)
         last_state_publish_tick = HAL_GetTick();
         last_time_sync_tick = last_state_publish_tick;
         last_ping_tick = last_state_publish_tick;
+        last_battery_tick = last_state_publish_tick;
 
         for (;;)
         {
@@ -257,6 +265,15 @@ void AppRTOS_Start(void *argument)
             IMU_Update();
             DriveControl_Update();
             IMUDiagnostics_Update(spin_result);
+
+            if ((uint32_t)(HAL_GetTick() - last_battery_tick) >= 1000U) {
+                last_battery_tick = HAL_GetTick();
+                std_msgs__msg__Float32 battery = {0};
+                /* Reuse the existing monitor's sample, never add a bus read.
+                 * Telemetry loss must not stop or reconnect motor control. */
+                if (BatteryMonitor_GetVoltage(&battery.data) &&
+                    !Publish(&battery_publisher, &battery)) rcl_reset_error();
+            }
 
             if ((HAL_GetTick() - last_state_publish_tick) >=
                 DRIVE_STATE_PUBLISH_MS)
@@ -301,6 +318,8 @@ void AppRTOS_Start(void *argument)
             FiniResult(rcl_subscription_fini(&xl430_command_subscriber, &node));
         if (move_status_publisher.impl)
             FiniResult(rcl_publisher_fini(&move_status_publisher, &node));
+        if (battery_publisher.impl)
+            FiniResult(rcl_publisher_fini(&battery_publisher, &node));
         if (joint_state_publisher.impl) FiniResult(rcl_publisher_fini(&joint_state_publisher, &node));
         for (size_t i = 0; i < 2; ++i)
             if (wheel_state_publishers[i].impl)

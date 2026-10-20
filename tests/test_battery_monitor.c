@@ -2,6 +2,7 @@
 #include "main.h"
 #include <assert.h>
 #include <stdio.h>
+#include <math.h>
 static uint32_t tick;
 static uint16_t voltage;
 static bool ok, on;
@@ -18,6 +19,21 @@ static void init(uint32_t start, uint16_t raw)
 { tick=start; voltage=raw; ok=true; reads=0; BatteryMonitor_Init(&motor); assert(!on); }
 int main(void)
 {
+    float volts = -1.0f;
+    init(0, 118);
+    assert(!BatteryMonitor_GetVoltage(&volts) && volts == -1.0f);
+    assert(!BatteryMonitor_GetVoltage(NULL));
+    step(100);
+    assert(BatteryMonitor_GetVoltage(&volts) && fabsf(volts-11.8f) < 0.001f);
+    unsigned saved_reads=reads;
+    assert(BatteryMonitor_GetVoltage(&volts) && reads == saved_reads);
+    tick += 501; assert(!BatteryMonitor_GetVoltage(&volts));
+    step(100); assert(BatteryMonitor_GetVoltage(&volts));
+    ok=false; step(100); assert(!BatteryMonitor_GetVoltage(&volts));
+    ok=true; voltage=0; step(100); assert(!BatteryMonitor_GetVoltage(&volts));
+    voltage=120; step(100); assert(BatteryMonitor_GetVoltage(&volts));
+    init(UINT32_MAX-150U, 118); step(100); tick+=100;
+    assert(BatteryMonitor_GetVoltage(&volts));
     init(0, 110); run(100); assert(!on); /* Strictly below 11.0 V. */
     init(0, 109); step(99); assert(reads==0); step(1); assert(reads==1);
     run(8); assert(!on); step(100); /* Full mean at t=1000. */

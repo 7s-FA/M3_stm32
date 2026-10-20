@@ -76,7 +76,7 @@ static int publish(void) {
 #define rclc_node_init_default(n,name,ns,s) ((void)(name),(void)(ns),(void)(s),create_handle((void **)&(n)->impl))
 #define rcl_node_fini(n) destroy_handle((void **)&(n)->impl)
 #define rclc_publisher_init_default(p,n,t,name) ((void)(n),assert(strcmp(name,"left_wheel_state")==0 || strcmp(name,"right_wheel_state")==0),create_handle((void **)&(p)->impl))
-#define rclc_publisher_init_best_effort(p,n,t,name) ((void)(n),assert(strcmp(name,"joint_states")==0 || strcmp(name,"move_status")==0),create_handle((void **)&(p)->impl))
+#define rclc_publisher_init_best_effort(p,n,t,name) ((void)(n),assert(strcmp(name,"joint_states")==0 || strcmp(name,"move_status")==0 || strcmp(name,"battery_voltage")==0),create_handle((void **)&(p)->impl))
 #define rclc_service_init_default(p,n,t,name) ((void)(n),(void)(name),create_handle((void **)&(p)->impl))
 #define rcl_service_fini(p,n) ((void)(n),destroy_handle((void **)&(p)->impl))
 #define rclc_executor_add_service(e,s,q,r,cb) ((void)(e),(void)(s),(void)(q),(void)(r),(void)(cb),add())
@@ -117,6 +117,7 @@ void IMUDiagnostics_Fini(rcl_node_t *n) { (void)n;if(diag_resource)destroy();dia
 void IMUDiagnostics_Update(rcl_ret_t rc) { (void)rc; }
 void DriveControl_Init(void) {}
 void DriveControl_Update(void) {}
+bool BatteryMonitor_GetVoltage(float *volts) { *volts=11.8f; return true; }
 bool DriveControl_IsEnabled(void) { return false; }
 void DriveControl_Disconnect(void) { ++stops;online=false;spins=0; }
 void DriveControl_SetTorque(bool on) { assert(!on); }
