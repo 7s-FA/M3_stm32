@@ -19,15 +19,25 @@ typedef struct {
     MPU9250_Sample_t sample; /* Uncorrected sensor sample for diagnostics. */
 } IMU_Status_t;
 
-/* Debugger snapshot: written only by AppRTOS_Start. Halt to inspect atomically. */
+typedef struct {
+    IMU_Status_t status;
+    float orientation[4];
+} IMU_Reading_t;
+
+/* Debugger snapshot: written only by the IMU task. Halt to inspect atomically.
+ * ROS publish errors are owned separately by IMU_PublishErrors(). */
 extern IMU_Status_t imu_status;
 
-/* Once at task startup, before drive initialization. No fatal error on
+/* Once at IMU task startup. No fatal error on
  * missing/wrong sensor. Power-cycle/reset after fixing an initialization fault. */
 void IMU_InitSensor(void);
 rcl_ret_t IMU_InitPublisher(rcl_node_t *node);
-/* Call from the same task after DriveControl_Update. No ISR calls. */
+/* IMU task only: acquisition and estimation, with no ROS calls. */
 void IMU_Update(void);
+void IMU_GetReading(IMU_Reading_t *reading);
 
+/* ROS task only; reading must be a synchronized copy, never live sensor state. */
+void IMU_Publish(const IMU_Reading_t *reading);
+uint32_t IMU_PublishErrors(void);
 void IMU_FiniPublisher(rcl_node_t *node);
 #endif

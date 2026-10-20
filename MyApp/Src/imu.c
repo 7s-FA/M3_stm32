@@ -17,6 +17,7 @@ static sensor_msgs__msg__Imu message;
 static bool publisher_ready;
 static uint32_t last_attempt;
 static uint32_t interval_ms;
+static uint32_t publish_errors, last_published_sample;
 
 void IMU_InitSensor(void)
 {
@@ -83,34 +84,55 @@ void IMU_Update(void)
         gyro[i]=imu_status.sample.angular_velocity_rad_s[i]-imu_status.calibration.bias[i];
     imu_status.attitude_valid = IMUAttitude_Update(&attitude, imu_status.sample.tick_ms,
         imu_status.sample.acceleration_m_s2, gyro);
-    if (!imu_status.attitude_valid) return;
-    message.orientation.w=attitude.q[0];
-    message.orientation.x=attitude.q[1];
-    message.orientation.y=attitude.q[2];
-    message.orientation.z=attitude.q[3];
-    message.orientation_covariance[0]=0.0;
-    if (!publisher_ready || !rmw_uros_epoch_synchronized())
-        return;
+}
 
-    /* Timestamp at read completion; no claim of exact hardware sample time. */
-    int64_t stamp_ns = rmw_uros_epoch_nanos();
+void IMU_GetReading(IMU_Reading_t *reading)
+{
+    reading->status = imu_status;
+    memcpy(reading->orientation, attitude.q, sizeof(reading->orientation));
+}
+
+uint32_t IMU_PublishErrors(void)
+{
+    return publish_errors;
+}
+
+void IMU_Publish(const IMU_Reading_t *reading)
+{
+    const IMU_Status_t *status = &reading->status;
+    if (!status->sample_valid || !status->attitude_valid ||
+        status->samples == last_published_sample ||
+        !publisher_ready || !rmw_uros_epoch_synchronized())
+        return;
+    /* A reading is attempted once, as in the former combined update/publish. */
+    last_published_sample = status->samples;
+    message.orientation.w=reading->orientation[0];
+    message.orientation.x=reading->orientation[1];
+    message.orientation.y=reading->orientation[2];
+    message.orientation.z=reading->orientation[3];
+    message.orientation_covariance[0]=0.0;
+
+    /* Convert the acquisition tick using ROS time only in the ROS task.
+     * Do not stamp delayed snapshots as if measured at publication time. */
+    int64_t stamp_ns = rmw_uros_epoch_nanos() -
+        (int64_t)(uint32_t)(HAL_GetTick() - status->sample.tick_ms) * 1000000LL;
     int64_t seconds = stamp_ns / 1000000000LL;
     if (stamp_ns <= 0 || seconds > INT32_MAX)
         return;
     message.header.stamp.sec = (int32_t)seconds;
     message.header.stamp.nanosec = (uint32_t)(stamp_ns % 1000000000LL);
-    message.linear_acceleration.x = imu_status.sample.acceleration_m_s2[0];
-    message.linear_acceleration.y = imu_status.sample.acceleration_m_s2[1];
-    message.linear_acceleration.z = imu_status.sample.acceleration_m_s2[2];
-    message.angular_velocity.x = imu_status.sample.angular_velocity_rad_s[0]
-        - imu_status.calibration.bias[0];
-    message.angular_velocity.y = imu_status.sample.angular_velocity_rad_s[1]
-        - imu_status.calibration.bias[1];
-    message.angular_velocity.z = imu_status.sample.angular_velocity_rad_s[2]
-        - imu_status.calibration.bias[2];
+    message.linear_acceleration.x = status->sample.acceleration_m_s2[0];
+    message.linear_acceleration.y = status->sample.acceleration_m_s2[1];
+    message.linear_acceleration.z = status->sample.acceleration_m_s2[2];
+    message.angular_velocity.x = status->sample.angular_velocity_rad_s[0]
+        - status->calibration.bias[0];
+    message.angular_velocity.y = status->sample.angular_velocity_rad_s[1]
+        - status->calibration.bias[1];
+    message.angular_velocity.z = status->sample.angular_velocity_rad_s[2]
+        - status->calibration.bias[2];
     if (rcl_publish(&publisher, &message, NULL) != RCL_RET_OK)
     {
-        ++imu_status.publish_errors;
+        ++publish_errors;
         rcl_reset_error();
     }
 }

@@ -4,7 +4,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
-#include <sensor_msgs/msg/joint_state.h>
 
 typedef struct
 {
@@ -16,11 +15,12 @@ typedef struct
     int32_t read_result;
 } DriveState_t;
 
-/* Call from the application task only, including the executor callbacks. */
+/* Drive task only. ROS callbacks use app_tasks.h instead. */
 void DriveControl_Init(void);
 void DriveControl_Disconnect(void);
 void DriveControl_SetTorque(bool enabled);
 void DriveControl_SetVelocity(float linear_mps, float angular_radps);
+void DriveControl_SetVelocityAt(float linear_mps, float angular_radps, uint32_t received_tick);
 void DriveControl_SetRawVelocity(bool left, int32_t velocity);
 /* move <left pulses> <right pulses> <profile velocity> [positive request ID].
  * Copies/validates the bounded string; motor I/O runs in Update. */
@@ -29,7 +29,7 @@ size_t DriveControl_FormatMoveStatus(char *buffer, size_t capacity);
 void DriveControl_Update(void);
 bool DriveControl_IsEnabled(void);
 void DriveControl_GetState(DriveState_t *state);
-/* The caller owns preallocated JointState name/position/velocity storage. */
-bool DriveControl_UpdateJointState(sensor_msgs__msg__JointState *message);
+/* Copies calibrated joint values without calling ROS or accessing hardware. */
+bool DriveControl_GetJointValues(double position[2], double velocity[2]);
 
 #endif

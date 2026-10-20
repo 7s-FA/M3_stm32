@@ -135,15 +135,15 @@ ROS_DOMAIN_ID=40 ros2 service call /stm32/get_drive_state std_srvs/srv/Trigger '
 차체의 0.1 mm 정지 정확도를 보장하지 않습니다. 슬립·타이어 변형·기어 유격·바퀴
 반지름 보정이 영향을 줍니다. 속도 모드로 복귀하면 목표 위치를 계속 유지하지 않습니다.
 
-호스트 검증:
+펌웨어 빌드:
 
 ```bash
-bash tests/run_reconnection.sh
+cmake --preset Debug
+cmake --build --preset Debug -j4
 ```
 
-ASan/UBSan으로 기존 연결·속도 제어·IMU·배터리 테스트와 새 상대 이동 상태기계,
-명령 파싱/ID 중복 방지, 정지 판정, 모드 복귀 실패, 엔코더 기준 보정, 패킷의
-부호·CRC·byte stuffing을 검증합니다. 실제 모터 제어 정확도와 기구 거동은 별도입니다.
+호스트 검증 전용 `tests` 폴더는 회귀 검증 후 삭제했다. 실제 모터 제어 정확도와
+기구 거동은 위 실물 검증 절차로 확인한다.
 
 참고: [XL430 제어 테이블](https://emanual.robotis.com/docs/en/dxl/x/xl430-w250/),
 [Protocol 2.0 패킷 처리](https://emanual.robotis.com/docs/en/dxl/protocol2/#packet-process).

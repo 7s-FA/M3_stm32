@@ -25,6 +25,7 @@
 
 /* Battery thresholds in XL430 raw units (0.1 V); active-high buzzer driver. */
 #define BATTERY_SAMPLE_MS           100U
+#define BATTERY_PUBLISH_MS          1000U
 #define BATTERY_SAMPLE_COUNT        10U
 #define BATTERY_LOW_RAW             110U
 #define BATTERY_RECOVER_RAW         113U

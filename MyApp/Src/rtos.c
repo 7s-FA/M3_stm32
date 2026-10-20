@@ -3,6 +3,7 @@
 #include "imu_diagnostics.h"
 #include "app_config.h"
 #include "drive_control.h"
+#include "app_tasks.h"
 #include "microros_platform.h"
 #include "main.h"
 #include "cmsis_os.h"
@@ -18,10 +19,12 @@
 #include <geometry_msgs/msg/twist.h>
 #include <std_msgs/msg/string.h>
 #include <std_msgs/msg/int32.h>
+#include <std_msgs/msg/float32.h>
+#include <sensor_msgs/msg/joint_state.h>
 
-/* Two wheel states, JointState, IMU, diagnostics and move status; one service. */
-#if RMW_UXRCE_MAX_PUBLISHERS < 6 || RMW_UXRCE_MAX_SERVICES < 1
-#error "micro-ROS requires at least 6 publishers and 1 service"
+/* Existing six publishers plus cached battery telemetry; one service. */
+#if RMW_UXRCE_MAX_PUBLISHERS < 7 || RMW_UXRCE_MAX_SERVICES < 1
+#error "micro-ROS requires at least 7 publishers and 1 service"
 #endif
 
 static void DriveStateCallback(const void *request, void *response);
@@ -34,6 +37,8 @@ static void LeftWheelVelocityCmdCallback(const void *msgin);
 static void RightWheelVelocityCmdCallback(const void *msgin);
 static void CmdVelCallback(const void *msgin);
 static bool StringCommandEqual(const std_msgs__msg__String *msg, const char *command);
+static bool JointStateFromSnapshot(const AppDriveSnapshot *snapshot,
+                                   sensor_msgs__msg__JointState *message);
 
 /* A failed attempt returns to Agent discovery instead of halting the MCU. */
 #define TRY_ROS(call) do { if ((call) != RCL_RET_OK) goto disconnect; } while (0)
@@ -53,8 +58,7 @@ void AppRTOS_Start(void *argument)
 {
     (void)argument;
 
-    IMU_InitSensor();
-    DriveControl_Init();
+    AppTasks_WaitReady();
     MicroROSPlatform_Init();
 
     for (;;) { /* WAITING -> CREATE -> CONNECTED -> CLEANUP -> WAITING */
@@ -77,6 +81,7 @@ void AppRTOS_Start(void *argument)
         drive_state_text[0] = '\0';
         rcl_publisher_t joint_state_publisher = rcl_get_zero_initialized_publisher();
         rcl_publisher_t move_status_publisher = rcl_get_zero_initialized_publisher();
+        rcl_publisher_t battery_publisher = rcl_get_zero_initialized_publisher();
         static char move_status_text[192];
         std_msgs__msg__String move_status_msg = {0};
         move_status_msg.data.data = move_status_text;
@@ -96,6 +101,7 @@ void AppRTOS_Start(void *argument)
         uint32_t last_state_publish_tick;
         uint32_t last_time_sync_tick;
         uint32_t last_ping_tick;
+        uint32_t last_battery_tick;
 
         static char xl430_command_buffer[XL430_CMD_BUFFER_SIZE];
         static char left_joint_name[] = LEFT_WHEEL_JOINT_NAME;
@@ -137,10 +143,8 @@ void AppRTOS_Start(void *argument)
         joint_state_msg.header.frame_id.size = 0U;
         joint_state_msg.header.frame_id.capacity = sizeof(joint_frame_id);
 
-        /* Keep sampling while waiting. Publisher handles are absent in this state. */
+        /* Drive/IMU workers keep running through discovery and ROS setup. */
         while (rmw_uros_ping_agent(50, 1) != RMW_RET_OK) {
-            IMU_Update();
-            DriveControl_Update();
             osDelay(100);
         }
         allocator = rcl_get_default_allocator();
@@ -171,6 +175,9 @@ void AppRTOS_Start(void *argument)
         TRY_ROS(rclc_publisher_init_best_effort(
             &move_status_publisher, &node,
             ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, String), "move_status"));
+        TRY_ROS(rclc_publisher_init_best_effort(
+            &battery_publisher, &node,
+            ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32), "battery_voltage"));
         TRY_ROS(rclc_service_init_default(
             &drive_state_service, &node,
             ROSIDL_GET_SRV_TYPE_SUPPORT(std_srvs, srv, Trigger), "get_drive_state"));
@@ -226,10 +233,11 @@ void AppRTOS_Start(void *argument)
         last_state_publish_tick = HAL_GetTick();
         last_time_sync_tick = last_state_publish_tick;
         last_ping_tick = last_state_publish_tick;
+        last_battery_tick = last_state_publish_tick;
 
         for (;;)
         {
-            DriveControl_Update(); /* Service the command watchdog before communication. */
+            AppDriveSnapshot drive;
             if ((uint32_t)(HAL_GetTick() - last_ping_tick) >= 200U) {
                 last_ping_tick = HAL_GetTick();
                 if (rmw_uros_ping_agent(50, 1) != RMW_RET_OK) goto disconnect;
@@ -241,7 +249,8 @@ void AppRTOS_Start(void *argument)
             /* Refresh the Agent clock even after initial sync. The sync flag
              * does not mean the MCU clock still agrees with the Pi clock.
              * Keep this bounded blocking request out of motor-enabled operation. */
-            if (!DriveControl_IsEnabled() &&
+            AppDrive_GetSnapshot(&drive);
+            if (!drive.enabled &&
                 (HAL_GetTick() - last_time_sync_tick >= 2000U))
             {
                 last_time_sync_tick = HAL_GetTick();
@@ -250,29 +259,44 @@ void AppRTOS_Start(void *argument)
 
             if (xl430_command_pending)
             {
-                DriveControl_SetTorque(xl430_torque_command);
+                AppDrive_SetTorque(xl430_torque_command);
                 xl430_command_pending = 0U;
             }
 
-            IMU_Update();
-            DriveControl_Update();
-            IMUDiagnostics_Update(spin_result);
+            IMU_Reading_t reading;
+            AppImu_GetSnapshot(&reading);
+            IMU_Publish(&reading);
+            reading.status.publish_errors = IMU_PublishErrors();
+            IMUDiagnostics_Update(spin_result, &reading.status);
+
+            if ((uint32_t)(HAL_GetTick() - last_battery_tick) >= BATTERY_PUBLISH_MS) {
+                last_battery_tick = HAL_GetTick();
+                AppDrive_GetSnapshot(&drive);
+                /* Cached sample only: no UART access or cross-task live state.
+                 * Recheck age because a drive transaction may delay snapshots. */
+                if (drive.battery_valid &&
+                    (uint32_t)(HAL_GetTick() - drive.battery_tick) <= BATTERY_MAX_GAP_MS) {
+                    std_msgs__msg__Float32 battery = {.data = drive.battery_voltage};
+                    /* Match pjb: telemetry failure alone must not stop the drive. */
+                    if (!Publish(&battery_publisher, &battery)) rcl_reset_error();
+                }
+            }
 
             if ((HAL_GetTick() - last_state_publish_tick) >=
                 DRIVE_STATE_PUBLISH_MS)
             {
                 last_state_publish_tick = HAL_GetTick();
-                move_status_msg.data.size = DriveControl_FormatMoveStatus(
-                    move_status_text, sizeof(move_status_text));
+                AppDrive_GetSnapshot(&drive);
+                memcpy(move_status_text, drive.move_status, sizeof(move_status_text));
+                move_status_msg.data.size = strlen(move_status_text);
                 if (!Publish(&move_status_publisher, &move_status_msg)) goto disconnect;
-                DriveState_t state;
-                DriveControl_GetState(&state);
+                DriveState_t state = drive.state;
                 const int32_t wheel_states[] = {state.left_state, state.right_state};
                 for (size_t i = 0; i < 2; ++i) {
                     std_msgs__msg__Int32 message = {.data = wheel_states[i]};
                     if (!Publish(&wheel_state_publishers[i], &message)) goto disconnect;
                 }
-                if (DriveControl_UpdateJointState(&joint_state_msg) &&
+                if (JointStateFromSnapshot(&drive, &joint_state_msg) &&
                     !Publish(&joint_state_publisher, &joint_state_msg)) goto disconnect;
             }
 
@@ -283,7 +307,7 @@ void AppRTOS_Start(void *argument)
         /* Stop before any potentially blocking cleanup. Never replay pending commands. */
         xl430_command_pending = false;
         xl430_torque_command = false;
-        DriveControl_Disconnect();
+        AppDrive_Disconnect();
         rcl_reset_error();
         if (support_ready) {
             (void)rmw_uros_set_context_entity_destroy_session_timeout(
@@ -301,6 +325,8 @@ void AppRTOS_Start(void *argument)
             FiniResult(rcl_subscription_fini(&xl430_command_subscriber, &node));
         if (move_status_publisher.impl)
             FiniResult(rcl_publisher_fini(&move_status_publisher, &node));
+        if (battery_publisher.impl)
+            FiniResult(rcl_publisher_fini(&battery_publisher, &node));
         if (joint_state_publisher.impl) FiniResult(rcl_publisher_fini(&joint_state_publisher, &node));
         for (size_t i = 0; i < 2; ++i)
             if (wheel_state_publishers[i].impl)
@@ -315,15 +341,26 @@ void AppRTOS_Start(void *argument)
     }
 }
 
+static bool JointStateFromSnapshot(const AppDriveSnapshot *snapshot,
+                                   sensor_msgs__msg__JointState *message)
+{
+    if (!snapshot->joint_valid || !rmw_uros_epoch_synchronized()) return false;
+    memcpy(message->position.data, snapshot->position, sizeof(snapshot->position));
+    memcpy(message->velocity.data, snapshot->velocity, sizeof(snapshot->velocity));
+    int64_t stamp = rmw_uros_epoch_nanos();
+    message->header.stamp.sec = stamp > 0 ? (int32_t)(stamp / 1000000000LL) : 0;
+    message->header.stamp.nanosec = stamp > 0 ? (uint32_t)(stamp % 1000000000LL) : 0;
+    return true;
+}
+
 /* Only snapshots cached data; never performs motor I/O from a service callback. */
 static void DriveStateCallback(const void *request, void *response)
 {
     (void)request;
     std_srvs__srv__Trigger_Response *out = response;
-    DriveState_t state;
-    DriveControl_GetState(&state);
-    char move_text[192];
-    (void)DriveControl_FormatMoveStatus(move_text, sizeof(move_text));
+    AppDriveSnapshot drive;
+    AppDrive_GetSnapshot(&drive);
+    DriveState_t state = drive.state;
     int length = snprintf(out->message.data, out->message.capacity,
         "{\"xl430_state\":%ld,"
         "\"left_wheel_velocity_state\":%ld,\"right_wheel_velocity_state\":%ld,"
@@ -334,7 +371,7 @@ static void DriveStateCallback(const void *request, void *response)
         (long)state.left_position, (long)state.right_position,
         state.sample_valid ? "true" : "false",
         (unsigned long)state.sample_tick_ms, (unsigned long)state.sample_age_ms,
-        (long)state.read_result, move_text);
+        (long)state.read_result, drive.move_status);
     if (length < 0 || (size_t)length >= out->message.capacity) {
         out->success = false;
         out->message.size = 0;
@@ -349,7 +386,7 @@ static void CmdVelCallback(const void *msgin)
 {
     const geometry_msgs__msg__Twist *msg = msgin;
     if (msg != NULL)
-        DriveControl_SetVelocity((float)msg->linear.x, (float)msg->angular.z);
+        AppDrive_SetVelocity((float)msg->linear.x, (float)msg->angular.z);
 }
 
 static void XL430CmdCallback(const void *msgin)
@@ -376,7 +413,7 @@ static void XL430CmdCallback(const void *msgin)
     }
     else
     {
-        DriveControl_MoveCommand(msg->data.data, msg->data.size);
+        AppDrive_MoveCommand(msg->data.data, msg->data.size);
     }
 }
 
@@ -384,14 +421,14 @@ static void LeftWheelVelocityCmdCallback(const void *msgin)
 {
     const std_msgs__msg__Int32 *msg = msgin;
     if (msg != NULL)
-        DriveControl_SetRawVelocity(true, msg->data);
+        AppDrive_SetRawVelocity(true, msg->data);
 }
 
 static void RightWheelVelocityCmdCallback(const void *msgin)
 {
     const std_msgs__msg__Int32 *msg = msgin;
     if (msg != NULL)
-        DriveControl_SetRawVelocity(false, msg->data);
+        AppDrive_SetRawVelocity(false, msg->data);
 }
 
 static bool StringCommandEqual(const std_msgs__msg__String *msg,

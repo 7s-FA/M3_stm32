@@ -11,6 +11,7 @@ All micro-ROS endpoints now live under `/stm32` (domain 40).
   Sent only after a successful wheel read and time synchronization.
 - `/stm32/cmd_vel`: geometry_msgs/Twist, forward m/s and yaw rad/s, 300ms watchdog.
 - `/stm32/xl430_cmd`: std_msgs/String, motor on / motor off.
+- `/stm32/battery_voltage`: std_msgs/Float32, best effort, volts, 1 s publication interval.
 - Existing raw wheel command/state topics are also under /stm32.
 
 MyApp/Src/imu_attitude.c contains the HAL/ROS-independent quaternion filter.
@@ -23,27 +24,94 @@ Raspberry Pi adapter, preserved TurtleBot3 odometry, installation and terminal-b
 instructions: [raspberry_pi/README.md](../raspberry_pi/README.md).
 
 Build: cmake --preset Debug then cmake --build --preset Debug -j4.
-No CubeMX setting changes are required. Flashing and hardware validation are separate.
+`burger.ioc` includes the ROS task's BelowNormal priority; worker tasks and their
+static stacks are created in the preserved USER CODE sections of `freertos.c`.
+Flashing and hardware validation are separate.
+
+## FreeRTOS task ownership
+
+| Task | Priority | Static stack | Responsibility |
+| --- | --- | --- | --- |
+| `defaultTask` (ROS) | BelowNormal | 12,000 bytes | All micro-ROS calls, executor, publications, discovery and teardown |
+| `driveTask` | AboveNormal | 4,096 bytes | USART1/XL430, velocity and move state machines, watchdog, battery and buzzer |
+| `imuTask` | Normal | 4,096 bytes | I2C1, sensor reads, calibration and attitude estimation |
+
+The drive and IMU workers target 20 ms periods and continue during ROS discovery,
+setup, publication waits and reconnect. Missed periods are skipped, not replayed
+in a busy catch-up loop. Peripheral HAL calls are still blocking: the drive task's
+UART response timeouts can delay the lower-priority tasks. These are not hard
+real-time or end-to-end latency guarantees. Sampling/calibration timing can differ
+from the previous single-task loop even though units, thresholds and algorithms
+are unchanged.
+
+`app_tasks.c` owns a statically allocated one-command queue and binary completion
+semaphore. The ROS task is the sole producer and waits for command acknowledgement;
+this preserves command order and avoids a backlog or silent queue overflow.
+`cmd_vel` carries its original receive tick for the existing 300 ms watchdog.
+The deferred torque-command handling after executor dispatch is retained.
+Disconnect uses the same acknowledged path: both motor shutdown attempts finish
+before ROS objects are destroyed, and no queued command survives reconnect.
+
+Two priority-inheritance mutexes protect only copies of drive/IMU snapshots.
+No hardware access, ROS call or wait for a command runs while holding them.
+The service reads a coherent cached snapshot without motor I/O; sample age
+continues to advance while the drive task is busy. IMU measurements are copied
+to the ROS task, stamped using their acquisition tick and published at most once
+per sample. Slow ROS communication can skip intermediate IMU samples rather than
+accumulate an unbounded queue. Sensor state and calibration survive reconnect.
+Worker readiness is signalled with a counting semaphore before ROS starts.
+
+The ROS names, QoS, message fields, command syntax, motion limits, timeout settings,
+move acknowledgements and battery thresholds are unchanged. The diagnostic
+firmware tag remains `imu-ahrs-v6.7`; no Pi bridge changes are required.
+
+The root `tests` directory contained host-only verification code and has been
+removed after regression checks; it was never linked into the firmware.
+After flashing, repeat the reconnect and position-move checks, verify `cmd_vel`
+timeout stopping, and measure task stack margins and actual sensor/control rates.
 
 ## Battery buzzer
 
 - PC4 (`BUZZER`) drives an active-high external driver for the 5 V active buzzer;
   do not power the buzzer directly from the STM32 GPIO. CubeMX output starts Low.
-- The application task reads left XL430 ID 1 Present Input Voltage (144, 2 bytes,
+- The drive task reads left XL430 ID 1 Present Input Voltage (144, 2 bytes,
   0.1 V units) at most once per 100 ms, serialized with existing USART1 traffic.
 - After 10 valid samples, a mean below 11.0 V for 6 s starts the alarm. A mean at
   least 11.3 V for 3 s clears it. The alarm is on for 500 ms every 2 s.
 - A failed read or a service gap over 500 ms resets the averaging/hold window;
   an existing alarm remains latched until valid recovery readings arrive.
 - Monitoring also runs while waiting for the ROS Agent and with torque off.
-  These are cooperative timings: blocking ROS setup/communication can delay
-  sampling and GPIO transitions. There is no independent hardware alarm timer.
+  Blocking motor transactions can delay sampling and GPIO transitions; ROS
+  discovery no longer owns this loop. There is no independent hardware alarm timer.
 - This is an audible warning only, not motor shutdown or battery protection.
   Thresholds and timings are in `MyApp/Inc/app_config.h`.
-- Host regression checks: `bash tests/run_reconnection.sh`. Verify actual voltage
-  and buzzer wiring on hardware after flashing; host tests do not validate wiring.
+- Verify actual voltage and buzzer wiring on hardware after flashing.
+
+## Battery voltage telemetry
+
+Ported from [pjb/MyApp](https://github.com/7s-FA/M3_stm32/tree/pjb/MyApp).
+The ROS task publishes `/stm32/battery_voltage` as `std_msgs/msg/Float32` with
+best-effort QoS every 1,000 ms while connected (actual delivery can be delayed by
+scheduling or communication). The value is the latest XL430 voltage in volts,
+not the buzzer's moving average: raw 125 becomes 12.5 V.
+
+The drive task copies the monitor's existing sample into its protected snapshot;
+ROS performs no extra UART read. A failed read, zero value, or sample older than
+500 ms suppresses publication. Age is checked again after the task handoff.
+Battery publication failure alone does not stop the motors or trigger reconnect.
+The publisher is cleaned up on partial initialization failure and disconnect.
+Seven publisher slots are required; the bundled library has twelve.
+
+On the host with the Agent running:
+
+```bash
+ROS_DOMAIN_ID=40 ros2 topic echo /stm32/battery_voltage --qos-reliability best_effort
+```
 
 ## v6.4: on-demand drive state
+
+The versioned notes below describe the original changes; current task ownership
+and timing are described above.
 
 The five combined/velocity/position Int32 state publishers are removed.
 `/stm32/left_wheel_state` and `/stm32/right_wheel_state` remain periodic Int32
@@ -78,13 +146,13 @@ buffer and a 50 ms reliable-response session timeout. Avoid high-frequency
 polling: this service is for occasional diagnostics and still shares the motor
 control task. Sensor/command latency is not guaranteed by this change.
 
-Host checks: `bash tests/run_reconnection.sh`; firmware build:
+Firmware build:
 `cmake --preset Debug && cmake --build --preset Debug -j4`. After flashing, verify
 `fw=imu-ahrs-v6.4`, absence of the five replaced state topics with a fresh ROS graph,
 continued left/right wheel state publication,
 service responses (including disconnected-motor feedback), continued
 JointState/IMU output, and repeat the rotation latency test. Hardware validation
-and flashing are separate from these host checks.
+and flashing are separate from the build.
 
 ## v6.5: best-effort wheel feedback
 

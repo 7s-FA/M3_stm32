@@ -40,8 +40,10 @@ rcl_ret_t IMUDiagnostics_Init(rcl_node_t *node)
     return result;
 }
 
-void IMUDiagnostics_Update(rcl_ret_t spin_result)
+void IMUDiagnostics_Update(rcl_ret_t spin_result, const IMU_Status_t *status)
 {
+    /* Local immutable snapshot; the IMU task can continue acquiring samples. */
+    const IMU_Status_t imu_status = *status;
     ++loops;
     if (spin_result != RCL_RET_OK && spin_result != RCL_RET_TIMEOUT) {
         ++spin_errors;

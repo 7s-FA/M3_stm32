@@ -5,9 +5,8 @@
 #include "usart.h"
 #include <string.h>
 #include <stdio.h>
-#include <rmw_microros/rmw_microros.h>
 
-/* All state and callbacks are owned by the single application task. */
+/* All state and motor I/O are owned by the drive task. */
 
 typedef struct
 {
@@ -49,7 +48,7 @@ static void WheelInitialize(WheelControl_t *wheel, uint8_t id);
 static void WheelSetTorque(WheelControl_t *wheel, bool enable);
 static void WheelsProcessVelocityCommand(void);
 static void WheelsUpdate(void);
-static void JointStateUpdate(sensor_msgs__msg__JointState *message);
+static void JointStateUpdate(double position[2], double velocity[2]);
 static int32_t WheelsCombinedState(const WheelControl_t *left,
                                    const WheelControl_t *right);
 static void DriveProcessCmdVel(void);
@@ -330,7 +329,7 @@ void DriveControl_SetTorque(bool enabled)
     WheelSetTorque(&right_wheel, enabled);
 }
 
-/* Called only from the application task when the Agent/session is lost. */
+/* Called by the drive task, acknowledged before the ROS task tears down. */
 void DriveControl_Disconnect(void)
 {
     cmd_linear_mps = cmd_angular_radps = 0.0f;
@@ -344,10 +343,15 @@ void DriveControl_Disconnect(void)
 
 void DriveControl_SetVelocity(float linear_mps, float angular_radps)
 {
+    DriveControl_SetVelocityAt(linear_mps, angular_radps, HAL_GetTick());
+}
+
+void DriveControl_SetVelocityAt(float linear_mps, float angular_radps, uint32_t received_tick)
+{
     if (MoveActive()) return;
     cmd_linear_mps = linear_mps;
     cmd_angular_radps = angular_radps;
-    last_cmd_vel_tick = HAL_GetTick();
+    last_cmd_vel_tick = received_tick;
     cmd_vel_received = 1U;
     wheel_command_source = WHEEL_COMMAND_SOURCE_CMD_VEL;
 }
@@ -393,15 +397,14 @@ void DriveControl_GetState(DriveState_t *state)
     state->read_result = (int32_t)wheel_read_result;
 }
 
-bool DriveControl_UpdateJointState(sensor_msgs__msg__JointState *message)
+bool DriveControl_GetJointValues(double position[2], double velocity[2])
 {
-    if (!wheel_sample_valid || !rmw_uros_epoch_synchronized() ||
-        !left_wheel.position_zero_valid || !right_wheel.position_zero_valid)
+    if (!wheel_sample_valid || !left_wheel.position_zero_valid ||
+        !right_wheel.position_zero_valid)
         return false;
-    JointStateUpdate(message);
+    JointStateUpdate(position, velocity);
     return true;
 }
-
 
 static void WheelInitialize(WheelControl_t *wheel, uint8_t id)
 {
@@ -656,18 +659,12 @@ static void WheelsUpdate(void)
     }
 }
 
-static void JointStateUpdate(sensor_msgs__msg__JointState *message)
+static void JointStateUpdate(double position[2], double velocity[2])
 {
     uint32_t left_delta_raw;
     uint32_t right_delta_raw;
     int32_t left_delta;
     int32_t right_delta;
-    int64_t epoch_nanos;
-
-    if (message == NULL)
-    {
-        return;
-    }
 
     /* Unsigned subtraction keeps the delta well-defined across int32 wrap. */
     left_delta_raw = (uint32_t)left_wheel.present_position
@@ -677,37 +674,23 @@ static void JointStateUpdate(sensor_msgs__msg__JointState *message)
     memcpy(&left_delta, &left_delta_raw, sizeof(left_delta));
     memcpy(&right_delta, &right_delta_raw, sizeof(right_delta));
 
-    message->position.data[0] =
+    position[0] =
         (double)left_delta
         * XL430_POSITION_RAD_PER_RAW
         * LEFT_JOINT_DIRECTION;
-    message->position.data[1] =
+    position[1] =
         (double)right_delta
         * XL430_POSITION_RAD_PER_RAW
         * RIGHT_JOINT_DIRECTION;
 
-    message->velocity.data[0] =
+    velocity[0] =
         (double)left_wheel.present_velocity
         * XL430_VELOCITY_RAD_S_PER_RAW
         * LEFT_JOINT_DIRECTION;
-    message->velocity.data[1] =
+    velocity[1] =
         (double)right_wheel.present_velocity
         * XL430_VELOCITY_RAD_S_PER_RAW
         * RIGHT_JOINT_DIRECTION;
-
-    epoch_nanos = rmw_uros_epoch_nanos();
-    if (epoch_nanos > 0)
-    {
-        message->header.stamp.sec =
-            (int32_t)(epoch_nanos / 1000000000LL);
-        message->header.stamp.nanosec =
-            (uint32_t)(epoch_nanos % 1000000000LL);
-    }
-    else
-    {
-        message->header.stamp.sec = 0;
-        message->header.stamp.nanosec = 0U;
-    }
 }
 
 static int32_t WheelsCombinedState(const WheelControl_t *left,

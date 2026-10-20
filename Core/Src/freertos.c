@@ -26,6 +26,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "rtos.h"
+#include "app_tasks.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -46,6 +47,21 @@ typedef StaticTask_t osStaticThreadDef_t;
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
+static uint32_t driveTaskBuffer[1024];
+static uint32_t imuTaskBuffer[1024];
+static StaticTask_t driveTaskControlBlock, imuTaskControlBlock;
+static const osThreadAttr_t driveTask_attributes = {
+  .name = "driveTask",
+  .cb_mem = &driveTaskControlBlock, .cb_size = sizeof(driveTaskControlBlock),
+  .stack_mem = driveTaskBuffer, .stack_size = sizeof(driveTaskBuffer),
+  .priority = osPriorityAboveNormal,
+};
+static const osThreadAttr_t imuTask_attributes = {
+  .name = "imuTask",
+  .cb_mem = &imuTaskControlBlock, .cb_size = sizeof(imuTaskControlBlock),
+  .stack_mem = imuTaskBuffer, .stack_size = sizeof(imuTaskBuffer),
+  .priority = osPriorityNormal,
+};
 
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
@@ -58,7 +74,7 @@ const osThreadAttr_t defaultTask_attributes = {
   .cb_size = sizeof(defaultTaskControlBlock),
   .stack_mem = &defaultTaskBuffer[0],
   .stack_size = sizeof(defaultTaskBuffer),
-  .priority = (osPriority_t) osPriorityNormal,
+  .priority = (osPriority_t) osPriorityBelowNormal,
 };
 
 /* Private function prototypes -----------------------------------------------*/
@@ -77,6 +93,7 @@ void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
   */
 void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN Init */
+  AppTasks_Init();
 
   /* USER CODE END Init */
 
@@ -101,7 +118,12 @@ void MX_FREERTOS_Init(void) {
   defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
-  /* add threads, ... */
+  if (defaultTaskHandle == NULL ||
+      osThreadNew(AppDriveTask, NULL, &driveTask_attributes) == NULL ||
+      osThreadNew(AppImuTask, NULL, &imuTask_attributes) == NULL)
+  {
+    Error_Handler();
+  }
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */

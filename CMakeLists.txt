@@ -88,6 +88,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     MyApp/Src/battery_monitor.c
     MyApp/Src/xl430.c
     MyApp/Src/rtos.c
+    MyApp/Src/app_tasks.c
     MyApp/Src/drive_control.c
     MyApp/Src/microros_platform.c
 
