@@ -15,6 +15,8 @@ typedef struct {
     uint32_t samples;
     uint32_t read_errors;
     uint32_t publish_errors;
+    uint32_t recovery_attempts;
+    uint32_t recoveries;
     GyroCalibration_t calibration;
     MPU9250_Sample_t sample; /* Uncorrected sensor sample for diagnostics. */
 } IMU_Status_t;
@@ -28,8 +30,7 @@ typedef struct {
  * ROS publish errors are owned separately by IMU_PublishErrors(). */
 extern IMU_Status_t imu_status;
 
-/* Once at IMU task startup. No fatal error on
- * missing/wrong sensor. Power-cycle/reset after fixing an initialization fault. */
+/* Once at IMU task startup. Missing sensors are retried with a bounded delay. */
 void IMU_InitSensor(void);
 rcl_ret_t IMU_InitPublisher(rcl_node_t *node);
 /* IMU task only: acquisition and estimation, with no ROS calls. */

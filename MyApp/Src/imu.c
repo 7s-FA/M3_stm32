@@ -1,5 +1,6 @@
 #include "imu.h"
 #include "imu_attitude.h"
+#include "imu_bus.h"
 #include "app_config.h"
 #include "i2c.h"
 #include <rcl/error_handling.h>
@@ -29,7 +30,7 @@ void IMU_InitSensor(void)
     imu_status.initialized = imu_status.last_result == MPU9250_OK;
     GyroCalibration_Init(&imu_status.calibration, HAL_GetTick());
     last_attempt = HAL_GetTick();
-    interval_ms = IMU_READ_PERIOD_MS;
+    interval_ms = imu_status.initialized ? IMU_READ_PERIOD_MS : IMU_ERROR_RETRY_MS;
 }
 
 rcl_ret_t IMU_InitPublisher(rcl_node_t *node)
@@ -52,14 +53,32 @@ rcl_ret_t IMU_InitPublisher(rcl_node_t *node)
 
 void IMU_Update(void)
 {
-    if (!imu_status.initialized)
-        return;
     uint32_t now = HAL_GetTick();
     if ((uint32_t)(now - last_attempt) < interval_ms)
         return;
     last_attempt = now;
     imu_status.sample_valid = false;
     imu_status.attitude_valid = false;
+    bool recovering = !imu_status.initialized || imu_status.last_result == MPU9250_I2C_ERROR;
+    if (recovering) {
+        ++imu_status.recovery_attempts;
+        imu_status.last_hal_status = IMUBus_Recover();
+        interval_ms = IMU_ERROR_RETRY_MS;
+        if (imu_status.last_hal_status != HAL_OK) {
+            imu_status.last_result = MPU9250_I2C_ERROR;
+            ++imu_status.read_errors;
+            return;
+        }
+        if (!imu_status.initialized) {
+            imu_status.last_result = MPU9250_Init(&sensor, &hi2c1, IMU_ADDRESS_7BIT);
+            imu_status.who_am_i = sensor.who_am_i;
+            imu_status.last_hal_status = sensor.last_hal_status;
+            imu_status.initialized = imu_status.last_result == MPU9250_OK;
+            if (!imu_status.initialized) return;
+        }
+        /* Preserve sensor configuration, calibrated bias and yaw. The
+         * estimator rejects the first sample spanning a long gap. */
+    }
     imu_status.last_result = MPU9250_Read(&sensor, &imu_status.sample);
     imu_status.last_hal_status = sensor.last_hal_status;
     if (imu_status.last_result == MPU9250_NOT_READY)
@@ -68,11 +87,13 @@ void IMU_Update(void)
     {
         ++imu_status.read_errors;
         GyroCalibration_Reject(&imu_status.calibration);
-        /* Do not repeatedly stall the drive loop on a disconnected sensor. */
-        interval_ms = IMU_ERROR_RETRY_MS;
+        /* First transient fault: recover on the next IMU tick. A failed
+         * recovery backs off, so a disconnected sensor cannot monopolize CPU. */
+        interval_ms = recovering ? IMU_ERROR_RETRY_MS : IMU_READ_PERIOD_MS;
         return;
     }
     interval_ms = IMU_READ_PERIOD_MS;
+    if (recovering) ++imu_status.recoveries;
     imu_status.sample_valid = true;
     ++imu_status.samples;
     if (!GyroCalibration_Update(&imu_status.calibration,

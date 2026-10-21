@@ -1,4 +1,5 @@
 #include "mpu9250.h"
+#include "imu_bus.h"
 #include <stddef.h>
 
 #define REG_SMPLRT_DIV   0x19U
@@ -46,7 +47,7 @@ MPU9250_Result_t MPU9250_Init(MPU9250_Handle_t *h,
     h->address_hal = (uint16_t)address_7bit << 1;
 
     /* Also allows a sensor powered at the same time as the MCU to start. */
-    HAL_Delay(100U);
+    IMUBus_Delay(100U);
     if (ReadRegisters(h, REG_WHO_AM_I, &h->who_am_i, 1U) != MPU9250_OK)
         return MPU9250_I2C_ERROR;
     /* MPU6500 shares the accel/gyro/temp registers used below.
@@ -57,7 +58,7 @@ MPU9250_Result_t MPU9250_Init(MPU9250_Handle_t *h,
     uint8_t value = 0x80U; /* DEVICE_RESET */
     if (WriteRegisters(h, REG_PWR_MGMT_1, &value, 1U) != MPU9250_OK)
         return MPU9250_I2C_ERROR;
-    HAL_Delay(100U);
+    IMUBus_Delay(100U);
     value = 0x01U; /* Wake, auto-select best available clock. */
     if (WriteRegisters(h, REG_PWR_MGMT_1, &value, 1U) != MPU9250_OK)
         return MPU9250_I2C_ERROR;
@@ -73,7 +74,7 @@ MPU9250_Result_t MPU9250_Init(MPU9250_Handle_t *h,
     value = 0x01U; /* Raw-data-ready status; INT wire may remain unconnected. */
     if (WriteRegisters(h, REG_INT_ENABLE, &value, 1U) != MPU9250_OK)
         return MPU9250_I2C_ERROR;
-    HAL_Delay(40U);
+    IMUBus_Delay(40U);
     h->initialized = true;
     return MPU9250_OK;
 }

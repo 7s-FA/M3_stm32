@@ -56,11 +56,11 @@ void IMUDiagnostics_Update(rcl_ret_t spin_result, const IMU_Status_t *status)
     uint32_t age = imu_status.samples ?
         (uint32_t)(now - imu_status.sample.tick_ms) : UINT32_MAX;
     int length = snprintf(text, sizeof(text),
-        "fw=imu-ahrs-v6.7 cal=%s n=%lu/%lu bias_mrad_s=[%ld,%ld,%ld] rejected=%lu "
+        "fw=imu-v6.8-recovery cal=%s n=%lu/%lu bias_mrad_s=[%ld,%ld,%ld] rejected=%lu "
         "attitude=%u initialized=%u who_am_i=0x%02X model=%s result=%s "
         "hal=%u samples=%lu read_errors=%lu pub_err=%lu "
         "time_synced=%u age_ms=%lu loops=%lu "
-        "spin_errors=%lu spin_rc=%ld status_err=%lu",
+        "spin_errors=%lu spin_rc=%ld status_err=%lu recovery=%lu/%lu",
         imu_status.calibration.state == GYRO_CAL_READY ? "READY" :
             (imu_status.calibration.state == GYRO_CAL_WARMUP ? "WARMUP" : "COLLECTING"),
         (unsigned long)imu_status.calibration.count,
@@ -77,7 +77,9 @@ void IMUDiagnostics_Update(rcl_ret_t spin_result, const IMU_Status_t *status)
         (unsigned long)imu_status.publish_errors,
         (unsigned)rmw_uros_epoch_synchronized(), (unsigned long)age,
         (unsigned long)loops, (unsigned long)spin_errors, (long)last_spin_error,
-        (unsigned long)status_publish_errors);
+        (unsigned long)status_publish_errors,
+        (unsigned long)imu_status.recoveries,
+        (unsigned long)imu_status.recovery_attempts);
     if (length < 0) return;
     message.data.size = (size_t)length < sizeof(text) ? (size_t)length : sizeof(text) - 1U;
     /* Fits a 512-byte best-effort MTU; no time-sync or sensor-success gate. */

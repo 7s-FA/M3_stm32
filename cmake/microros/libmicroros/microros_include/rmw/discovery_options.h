@@ -64,7 +64,7 @@ typedef struct RMW_PUBLIC_TYPE rmw_discovery_options_s
   /// The list of manually-specified peers to perform static discovery with
   /**
    * Each peer is specified as a hostname or an IP address (IPv4 and IPv6 are both acceptable), or
-   * a subnet, e.g. 192.168.0.0/24.
+   * a subnet, e.g. 192.0.2.0/24.
    */
   rmw_peer_address_t * static_peers;
 

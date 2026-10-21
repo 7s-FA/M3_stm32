@@ -40,7 +40,7 @@ MCU 리셋/모터 토크 전환 후에는 어댑터를 재시작하거나 odomet
 PC에서 전송하려면 (SSH 호스트 이름 burger3이 해석되는 환경):
 
 ```bash
-rsync -av --exclude build --exclude .git /home/ej/STMProject/burger/ ubuntu@burger3:~/STMProject/burger/
+rsync -av --exclude build --exclude .git /home/ej/STMProject/burger/ robot@burger3:~/STMProject/burger/
 ```
 
 STM32는 기존 업로드 방법으로 **새 펌웨어**를 플래시한다.
