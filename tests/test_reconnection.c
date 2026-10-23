@@ -16,7 +16,7 @@
 
 static jmp_buf done;
 static unsigned tick, resources, step, fail_at, stops, sessions, spins, creates;
-static unsigned imu_resource, diag_resource, absent_pings;
+static unsigned imu_resource, diag_resource, absent_pings, online_pings;
 static int mode;
 static bool injected, online;
 static int token;
@@ -46,6 +46,8 @@ static int ping(void) {
     tick+=50;
     if (!online && absent_pings++ < 3) { assert(resources==0);return RMW_RET_ERROR; }
     if (online && mode==1 && sessions<50) { injected=true;return RMW_RET_ERROR; }
+    if (online && mode==5 && !injected) { injected=true;return RMW_RET_ERROR; }
+    if (online && mode==7 && ++online_pings % 3 != 0) { injected=true;return RMW_RET_ERROR; }
     return RMW_RET_OK;
 }
 static int spin(void) {
@@ -53,11 +55,13 @@ static int spin(void) {
     if (!spins++) { ++sessions; creates=step; }
     tick+=20;
     if (mode==2 && !injected) { injected=true;return RCL_RET_ERROR; }
+    if (mode>=5 && tick>2000) longjmp(done,1);
     if ((mode==1 ? sessions>=50 : sessions>=2) || ((fail_at || mode==4) && injected)) longjmp(done,1);
     return RCL_RET_OK;
 }
 static int publish(void) {
-    if (mode==3 && !injected) { injected=true;return RCL_RET_ERROR; }
+    if (mode==3 && sessions<2) { injected=true;return RCL_RET_ERROR; }
+    if (mode==6 && !injected) { injected=true;return RCL_RET_ERROR; }
     return RCL_RET_OK;
 }
 #define rcl_get_zero_initialized_service() ((rcl_service_t){0})
@@ -119,7 +123,11 @@ void DriveControl_Init(void) {}
 void DriveControl_Update(void) {}
 
 bool DriveControl_IsEnabled(void) { return false; }
-void DriveControl_Disconnect(void) { ++stops;online=false;spins=0; }
+void DriveControl_Disconnect(void) {
+    if(mode==1 && online)assert(link_ping_errors>=3);
+    if(mode==3 && online)assert(link_publish_errors>=3);
+    ++stops;online=false;spins=0;
+}
 void DriveControl_SetTorque(bool on) { assert(!on); }
 void DriveControl_SetVelocity(float a,float b) { (void)a;(void)b; }
 void DriveControl_SetRawVelocity(bool a,int32_t b) { (void)a;(void)b; }
@@ -151,10 +159,13 @@ uint32_t IMU_PublishErrors(void) { return 0; }
 bool rmw_uros_epoch_synchronized(void) { return true; }
 int64_t rmw_uros_epoch_nanos(void) { return 1700000000000000000LL; }
 static void run(int scenario,unsigned failure) {
-    tick=resources=step=stops=sessions=spins=creates=imu_resource=diag_resource=absent_pings=0;
+    tick=resources=step=stops=sessions=spins=creates=imu_resource=diag_resource=absent_pings=online_pings=0;
+    link_sessions=link_disconnects=link_ping_errors=link_publish_errors=0;
+    link_reason="startup";link_last_rc=0;
     injected=online=false;mode=scenario;fail_at=failure;
     if(!setjmp(done)) AppRTOS_Start(NULL);
-    assert(injected && stops==(mode==1 ? 49U : 1U) && absent_pings>=3);
+    assert(injected && stops==(mode>=5 ? 0U : mode==1 ? 49U : 1U) && absent_pings>=3);
+    if(mode>=5)assert(sessions==1 && link_disconnects==0);
 }
 static void test_service(void) {
     char buffer[768];
@@ -188,7 +199,7 @@ int main(void) {
     XL430CmdCallback(&command);assert(strcmp(raw,parsed_move)==0);
     test_service();
     run(1,0); unsigned creation_steps=creates/50;
-    run(2,0);run(3,0);run(4,0);
+    run(2,0);run(3,0);run(4,0);run(5,0);run(6,0);run(7,0);
     for(unsigned i=1;i<=creation_steps;++i)run(0,i);
     printf("PASS reconnect: absent Agent, 50 sessions, ping/spin/publish loss, partial support cleanup, %u creation faults with complete cleanup\n",creation_steps);
 }

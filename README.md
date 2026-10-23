@@ -1,29 +1,23 @@
-# host_total · M1 STM32 IMU 복구 (2026-10-21)
+# host_total · 통합 관제 변경사항 (2026-10-22)
 
-기준은 `main`의 `716f271`입니다. 배터리 전압 발행과 주행/IMU/ROS FreeRTOS 태스크 분리는 이미 기준 커밋에 포함돼 있습니다. 이 브랜치는 현장 IMU 복구 변경과 회귀 테스트를 추가합니다.
+기준 브랜치: `origin/host_total` · 기준 커밋: `abd88cba89a4dee7c67c0824ce45a17cc6ed432a`. 기존 브랜치 이력을 보존하여 변경을 추가합니다.
 
-## 추가·수정
+## 추가·수정 내용
 
-- `MyApp/Src/imu_bus.c`, `MyApp/Inc/imu_bus.h`: I2C 버스 복구와 RTOS 양보 대기. SCL/SDA를 강제로 HIGH 출력하지 않고 open-drain으로 해제 상태를 확인.
-- `imu.c`: 부팅 초기화 실패와 I2C 읽기 오류에서 제한된 간격으로 재시도. 정상 복구 시 기존 보정값/yaw를 유지하고 긴 간격 샘플 적분은 기존 보호에 따름.
-- `mpu9250.c`: 센서 초기화 대기를 `HAL_Delay`에서 `IMUBus_Delay`로 바꿔 대기 중 다른 태스크 실행 허용.
-- `imu_diagnostics.c`, `imu.h`: 복구 시도/성공 횟수 및 `imu-v6.8-recovery` 진단 표기.
-- `CMakeLists.txt`: 새 버스 복구 파일을 빌드에 포함.
-- `tests/`: IMU·I2C·배터리·주행 피드백·위치 이동·재연결·전송 복구 회귀 검사와 HAL 스텁.
+- imu-v6.9-link-guard: 단일 ping/상태 발행 실패로 즉시 연결을 끊지 않고 연속 3회 실패를 확인합니다. executor의 중대 오류와 지속 장애에서는 기존 정지 처리를 유지합니다.
+- 토크 OFF 때 소프트웨어 엔코더 기준을 지우지 않아 통신 재연결 후 바퀴 위치가 0으로 튀는 문제를 수정했습니다. MCU 자체 재부팅까지 기준을 영구 보존하는 기능은 아닙니다.
+- get_drive_state 응답에 세션·재연결·ping/발행 오류 횟수와 마지막 원인을 추가했습니다. 명령 재전송 방지와 300ms 속도 watchdog, 기존 모터 보호를 유지합니다.
+- IMU 초기화/I2C 오류 복구, 버스 해제와 RTOS 양보 대기, 복구 진단 및 회귀 테스트를 포함합니다. 배터리 발행·주행/IMU 태스크 분리는 기준 main에 이미 포함돼 있습니다.
 
-## 빌드·검증
+## 적용 위치와 확인
 
-```bash
-git submodule update --init --recursive
-cmake --preset Debug
-cmake --build --preset Debug -j4
-bash tests/run_reconnection.sh
-```
+11개 ASAN/UBSAN 테스트 실행 파일 통과, STM32 빌드 및 OpenOCD 기록 검증 완료. 2026-10-22 M1에서 v6.9·IMU READY·배터리 11.5V·정지 상태를 확인했습니다. 펌웨어 ELF SHA-256: 70be3e7e8095c94e89771c875931aa14c90849f8ca7f4f35aaf7c6b560b21305. 바이너리는 업로드하지 않습니다.
 
-회귀 테스트의 micro-ROS 헤더는 프로젝트 빌드 환경이 필요합니다. [애플리케이션 설명](MyApp/README.md)과 [Pi 어댑터 안내](raspberry_pi/README.md)를 함께 확인하세요.
+### 게시 전 검사 (2026-10-23)
 
-M1에 보관된 `burger-recovery.elf`와 호스트 빌드의 SHA-256이 일치함을 확인했지만 이번 게시에서는 MCU 플래시를 읽거나 쓰지 않았습니다. 빌드 파일·백업 플래시·실행 로그는 올리지 않습니다. 펌웨어 적용·토크·주행 확인은 장치 정지 상태에서 별도로 수행해야 합니다.
+공개용 사본 ASAN/UBSAN 테스트 실행 파일 11개 통과. 실물 동작을 실행한 검사는 아닙니다.
 
-## 게시 전 확인
+인증정보·운행 로그·빌드 산출물은 포함하지 않았습니다. 저장소에 원래 있던 모델/자산 이력은 유지합니다. [파일별 변경 목록](CHANGES_HOST_TOTAL.md)을 함께 확인하세요.
 
-tests/run_reconnection.sh의 IMU 버스·센서·자세·재연결·주행·배터리·위치·XL430 회귀 검사 모두 통과.
+---
+

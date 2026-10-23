@@ -458,7 +458,9 @@ static void WheelSetTorque(WheelControl_t *wheel, bool enable)
     {
         wheel->velocity_ready = false;
         wheel->drive_enabled = false;
-        wheel->position_zero_valid = false;
+        /* Disabling torque does not reset the actuator's measured position.
+         * Retain the odometry origin through ROS reconnects and track any
+         * wheel movement while disabled. Only boot/mode transitions rebase. */
     }
     else
     {

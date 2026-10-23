@@ -72,16 +72,23 @@ int main(void){
  assert(DriveControl_GetJointValues(pos,vel));
  DriveControl_GetState(&snapshot);assert(snapshot.sample_valid && snapshot.sample_age_ms==0 && snapshot.read_result==XL430_OK);
  assert(enables==0 && configs==0 && writes==0); /* Recovery never enables motion. */
+ double before_off=pos[0];
  DriveControl_SetTorque(false);tick+=20;DriveControl_Update();
  assert(DriveControl_GetJointValues(pos,vel) && !DriveControl_IsEnabled());
+ assert(fabs(pos[0]-before_off)<1e-9); /* Torque OFF must not zero odometry. */
+ position+=50;tick+=20;DriveControl_Update();
+ assert(DriveControl_GetJointValues(pos,vel));
+ assert(fabs(pos[0]-before_off-50*XL430_POSITION_RAD_PER_RAW)<1e-9);
  DriveControl_SetTorque(true);
  DriveControl_SetVelocity(0.1f,0);tick+=20;DriveControl_Update();
  assert(nonzero_writes>0);
  DriveControl_SetRawVelocity(true,50); /* Pending raw command must also be discarded. */
+ assert(DriveControl_GetJointValues(pos,vel));double before_disconnect=pos[0];
  DriveControl_Disconnect();
  assert(!DriveControl_IsEnabled() && !torque[1] && !torque[2]);
  unsigned before_motion=nonzero_writes;
  tick+=20;DriveControl_Update();
+ assert(DriveControl_GetJointValues(pos,vel) && fabs(pos[0]-before_disconnect)<1e-9);
  DriveControl_SetTorque(true);tick+=20;DriveControl_Update();
  assert(nonzero_writes==before_motion); /* Re-enable alone cannot replay velocity. */
  DriveControl_SetVelocity(0.1f,0);tick+=20;DriveControl_Update();

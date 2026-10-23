@@ -56,7 +56,7 @@ void IMUDiagnostics_Update(rcl_ret_t spin_result, const IMU_Status_t *status)
     uint32_t age = imu_status.samples ?
         (uint32_t)(now - imu_status.sample.tick_ms) : UINT32_MAX;
     int length = snprintf(text, sizeof(text),
-        "fw=imu-v6.8-recovery cal=%s n=%lu/%lu bias_mrad_s=[%ld,%ld,%ld] rejected=%lu "
+        "fw=imu-v6.9-link-guard cal=%s n=%lu/%lu bias_mrad_s=[%ld,%ld,%ld] rejected=%lu "
         "attitude=%u initialized=%u who_am_i=0x%02X model=%s result=%s "
         "hal=%u samples=%lu read_errors=%lu pub_err=%lu "
         "time_synced=%u age_ms=%lu loops=%lu "
