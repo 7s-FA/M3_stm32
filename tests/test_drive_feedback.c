@@ -5,6 +5,7 @@
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 void BatteryMonitor_Init(XL430_Handle_t *motor) { (void)motor; }
 void BatteryMonitor_Update(void) {}
 UART_HandleTypeDef huart1;
@@ -14,6 +15,7 @@ static bool sync_ok=true,torque[3];
 static XL430_Result_t read_result=XL430_OK;
 static int32_t position=1000;
 static unsigned nonzero_writes, zero_writes;
+static int32_t last_left_velocity, last_right_velocity;
 static uint32_t read_duration_ms;
 uint32_t HAL_GetTick(void){return tick;}
 bool rmw_uros_epoch_synchronized(void){return sync_ok;}
@@ -24,7 +26,7 @@ XL430_Result_t XL430_SetTorque(XL430_Handle_t *h,bool e){torque[h->id]=e;enables
 XL430_Result_t XL430_ReadTorque(XL430_Handle_t *h,bool *e){*e=torque[h->id];return XL430_OK;}
 XL430_Result_t XL430_ConfigureVelocityControl(XL430_Handle_t *h,uint8_t w){(void)w;torque[h->id]=true;++configs;return XL430_OK;}
 XL430_Result_t XL430_SetGoalVelocity(XL430_Handle_t *h,int32_t v){(void)h;(void)v;++writes;return XL430_OK;}
-XL430_Result_t XL430_SyncWriteGoalVelocity(XL430_Handle_t *l,int32_t lv,XL430_Handle_t *r,int32_t rv){(void)l;(void)r;nonzero_writes += (lv != 0 || rv != 0);zero_writes += (lv == 0 && rv == 0);++writes;return XL430_OK;}
+XL430_Result_t XL430_SyncWriteGoalVelocity(XL430_Handle_t *l,int32_t lv,XL430_Handle_t *r,int32_t rv){(void)l;(void)r;last_left_velocity=lv;last_right_velocity=rv;nonzero_writes += (lv != 0 || rv != 0);zero_writes += (lv == 0 && rv == 0);++writes;return XL430_OK;}
 XL430_Result_t XL430_SyncReadWheelState(XL430_Handle_t *l,XL430_WheelState_t *ls,XL430_Handle_t *r,XL430_WheelState_t *rs){
  assert(l->id==1 && r->id==2);++reads;tick+=read_duration_ms;
  if(read_result==XL430_OK){ls->position=rs->position=position;ls->velocity=rs->velocity=0;}
@@ -80,6 +82,25 @@ int main(void){
  assert(DriveControl_GetJointValues(pos,vel));
  assert(fabs(pos[0]-before_off-50*XL430_POSITION_RAD_PER_RAW)<1e-9);
  DriveControl_SetTorque(true);
+ /* Check real cmd_vel -> wheel writes, including rounding and reverse. */
+ const float speeds[]={.15f,-.15f,.045f,.035f};
+ const float conversion=60.0f/(2.0f*3.14159265359f*WHEEL_RADIUS_M*XL430_VELOCITY_UNIT_RPM);
+ for(unsigned i=0;i<sizeof(speeds)/sizeof(speeds[0]);++i){
+  DriveControl_SetVelocity(speeds[i],0);tick+=20;DriveControl_Update();
+  assert(last_left_velocity==(int32_t)(speeds[i]*conversion*LEFT_MOTOR_DIRECTION));
+  assert(last_right_velocity==(int32_t)(speeds[i]*conversion*RIGHT_MOTOR_DIRECTION));
+  assert(fabsf(fabsf((float)last_left_velocity)/conversion-fabsf(speeds[i]))<.001f);
+ }
+ DriveControl_SetVelocity(.15f,1.0f);tick+=20;DriveControl_Update();
+ assert(abs(last_left_velocity)<=XL430_CMD_VELOCITY_LIMIT);
+ assert(abs(last_right_velocity)<=XL430_CMD_VELOCITY_LIMIT);
+ assert(abs(last_right_velocity)>=XL430_CMD_VELOCITY_LIMIT-1);
+ assert(fabsf((float)abs(last_left_velocity)/abs(last_right_velocity)-(.15f-.08f)/(.15f+.08f))<.01f);
+ DriveControl_SetVelocity(.5f,0);tick+=20;DriveControl_Update();
+ assert(abs(last_left_velocity)<=XL430_CMD_VELOCITY_LIMIT && abs(last_left_velocity)>=XL430_CMD_VELOCITY_LIMIT-1);
+ assert(abs(last_right_velocity)<=XL430_CMD_VELOCITY_LIMIT && abs(last_right_velocity)>=XL430_CMD_VELOCITY_LIMIT-1);
+ DriveControl_SetRawVelocity(true,1000);tick+=20;DriveControl_Update();
+ assert(abs(last_left_velocity)==XL430_SAFE_VELOCITY_LIMIT);
  DriveControl_SetVelocity(0.1f,0);tick+=20;DriveControl_Update();
  assert(nonzero_writes>0);
  DriveControl_SetRawVelocity(true,50); /* Pending raw command must also be discarded. */

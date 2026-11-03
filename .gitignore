@@ -3,3 +3,10 @@ mx.scratch
 !.settings
 /MyApp/IMU.md
 /.backups/
+
+**/__pycache__/
+**/.pytest_cache/
+**/*.pyc
+build_local/
+install_local/
+log_local/

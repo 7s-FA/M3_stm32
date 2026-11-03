@@ -1,3 +1,5 @@
+> **2026-11-03 host_total:** 최신 소스 출처·설치 구분·검증 범위는 [HOST_TOTAL.md](HOST_TOTAL.md)를 확인하세요. 아래 기존 문서의 과거 검증 수치는 해당 시점 기준입니다.
+
 # host_total · 통합 관제 변경사항 (2026-10-22)
 
 기준 브랜치: `origin/host_total` · 기준 커밋: `abd88cba89a4dee7c67c0824ce45a17cc6ed432a`. 기존 브랜치 이력을 보존하여 변경을 추가합니다.

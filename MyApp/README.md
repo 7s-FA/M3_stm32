@@ -28,6 +28,21 @@ Build: cmake --preset Debug then cmake --build --preset Debug -j4.
 static stacks are created in the preserved USER CODE sections of `freertos.c`.
 Flashing and hardware validation are separate.
 
+## 2026-10-23: M1 15 cm/s command support (imu-v6.10-speed15)
+
+The former wheel limit of 100 raw units capped straight travel at about 7.91 cm/s,
+even when Nav2 requested 15 cm/s. `cmd_vel` now uses a separate 190-unit wheel
+ceiling (about 15.04 cm/s); a 0.15 m/s request converts to 189 units, about 14.96 cm/s.
+Both wheel commands are scaled together when turning to preserve their ratio.
+The final motor-write clamp uses the same ceiling, so it cannot silently cut the
+command back to 100. Raw/manual wheel and position-command limits remain 100.
+
+The 300 ms command watchdog, torque-off on disconnect, encoder-origin retention,
+and stale-command discard are unchanged. Docking speeds remain host-controlled.
+`tests/run_reconnection.sh` checks forward/reverse 15 cm/s conversion, existing
+3.5/4.5 cm/s commands, curved-command saturation, raw-command limits and recovery.
+Actual floor speed still needs measurement; a successful flash is not a driving test.
+
 ## FreeRTOS task ownership
 
 | Task | Priority | Static stack | Responsibility |

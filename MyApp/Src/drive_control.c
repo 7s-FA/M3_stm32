@@ -497,22 +497,26 @@ static void WheelsProcessVelocityCommand(void)
     left_wheel.velocity_command_pending = 0U;
     right_wheel.velocity_command_pending = 0U;
 
-    if (left_velocity > XL430_SAFE_VELOCITY_LIMIT)
+    /* cmd_vel has already been scaled as a pair to preserve curvature.
+     * Keep legacy raw/manual commands on their original lower ceiling. */
+    const int32_t velocity_limit = wheel_command_source == WHEEL_COMMAND_SOURCE_CMD_VEL
+                                 ? XL430_CMD_VELOCITY_LIMIT : XL430_SAFE_VELOCITY_LIMIT;
+    if (left_velocity > velocity_limit)
     {
-        left_velocity = XL430_SAFE_VELOCITY_LIMIT;
+        left_velocity = velocity_limit;
     }
-    else if (left_velocity < -XL430_SAFE_VELOCITY_LIMIT)
+    else if (left_velocity < -velocity_limit)
     {
-        left_velocity = -XL430_SAFE_VELOCITY_LIMIT;
+        left_velocity = -velocity_limit;
     }
 
-    if (right_velocity > XL430_SAFE_VELOCITY_LIMIT)
+    if (right_velocity > velocity_limit)
     {
-        right_velocity = XL430_SAFE_VELOCITY_LIMIT;
+        right_velocity = velocity_limit;
     }
-    else if (right_velocity < -XL430_SAFE_VELOCITY_LIMIT)
+    else if (right_velocity < -velocity_limit)
     {
-        right_velocity = -XL430_SAFE_VELOCITY_LIMIT;
+        right_velocity = -velocity_limit;
     }
 
     left_wheel.velocity_command = left_velocity;
@@ -762,9 +766,9 @@ static void DriveProcessCmdVel(void)
     maximum_raw = (left_magnitude > right_magnitude)
                 ? left_magnitude : right_magnitude;
 
-    if (maximum_raw > (float)XL430_SAFE_VELOCITY_LIMIT)
+    if (maximum_raw > (float)XL430_CMD_VELOCITY_LIMIT)
     {
-        scale = (float)XL430_SAFE_VELOCITY_LIMIT / maximum_raw;
+        scale = (float)XL430_CMD_VELOCITY_LIMIT / maximum_raw;
         left_raw *= scale;
         right_raw *= scale;
     }

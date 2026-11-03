@@ -11,7 +11,9 @@
 #define MOVE_TIMEOUT_MS              60000U
 #define XL430_LEFT_ID                1U
 #define XL430_RIGHT_ID               2U
-#define XL430_SAFE_VELOCITY_LIMIT    100
+#define XL430_SAFE_VELOCITY_LIMIT    100  /* Raw/manual and position commands. */
+/* cmd_vel wheels: 190 * 0.229 rpm * 2*pi*0.033 / 60 = 0.15036 m/s. */
+#define XL430_CMD_VELOCITY_LIMIT     190
 #define XL430_COMMAND_TIMEOUT_MS     1000U
 #define XL430_BUS_WATCHDOG_TICKS     50U
 #define DRIVE_CONTROL_PERIOD_MS      20U
